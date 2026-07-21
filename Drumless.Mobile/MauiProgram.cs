@@ -9,6 +9,21 @@ public static class MauiProgram
 {
     public static MauiApp CreateMauiApp()
     {
+#if ANDROID
+        // HybridWebView uses Android's native WebView. By default Android requires a
+        // user gesture before media playback, which prevents a YouTube item reached
+        // automatically from a playlist from starting on its own.
+        Microsoft.Maui.Handlers.HybridWebViewHandler.Mapper.AppendToMapping(
+            "AllowMediaAutoplay",
+            (handler, _) =>
+            {
+                if (handler.PlatformView is Android.Webkit.WebView webView)
+                {
+                    webView.Settings.MediaPlaybackRequiresUserGesture = false;
+                }
+            });
+#endif
+
         var builder = MauiApp.CreateBuilder();
         builder
             .UseMauiApp<App>()
