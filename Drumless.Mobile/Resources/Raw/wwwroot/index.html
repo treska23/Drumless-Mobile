@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+    <title>Reproductor de YouTube</title>
+    <link rel="icon" href="data:,">
+    <script src="_framework/hybridwebview.js"></script>
+    <style>
+        html, body, #player {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+        }
+        body {
+            display: grid;
+            place-items: center;
+            color: #f5f7fa;
+            font: 14px system-ui, sans-serif;
+        }
+        #waiting {
+            position: absolute;
+            z-index: 0;
+            color: #aeb8c4;
+        }
+        #player {
+            position: relative;
+            z-index: 1;
+        }
+    </style>
+</head>
+<body>
+    <div id="waiting">Preparando YouTube…</div>
+    <div id="player"></div>
+    <script>
+        let player = null;
+        let pendingVideoId = null;
+        let pendingPlaylistImport = null;
+        let playlistPollTimer = null;
+
+        function notify(payload) {
+            if (window.HybridWebView) {
+                window.HybridWebView.SendRawMessage(JSON.stringify(payload));
+            }
+        }
+
+        function playVideo(videoId) {
+            if (!videoId) return;
+            if (!player || typeof player.loadVideoById !== "function") {
+                pendingVideoId = videoId;
+                return;
+            }
+            pendingVideoId = null;
+            player.loadVideoById({ videoId: videoId });
+        }
+
+        function inspectPlaylist(playlistId, requestId) {
+            if (!playlistId || !requestId) return;
+            pendingPlaylistImport = {
+                playlistId: playlistId,
+                requestId: requestId,
+                attempts: 0,
+                stateChanged: false,
+                startedAt: Date.now()
+            };
+            if (!player || typeof player.cuePlaylist !== "function") {
+                return;
+            }
+
+            window.clearTimeout(playlistPollTimer);
+            player.cuePlaylist({
+                listType: "playlist",
+                list: playlistId,
+                index: 0
+            });
+            playlistPollTimer = window.setTimeout(pollPlaylist, 250);
+        }
+
+        function pollPlaylist() {
+            if (!pendingPlaylistImport ||
+                !player ||
+                typeof player.getPlaylist !== "function") {
+                return;
+            }
+
+            const elapsed = Date.now() - pendingPlaylistImport.startedAt;
+            if (!pendingPlaylistImport.stateChanged || elapsed < 500) {
+                pendingPlaylistImport.attempts += 1;
+                playlistPollTimer = window.setTimeout(pollPlaylist, 250);
+                return;
+            }
+
+            const videoIds = player.getPlaylist() || [];
+            if (videoIds.length > 0) {
+                const request = pendingPlaylistImport;
+                pendingPlaylistImport = null;
+                window.clearTimeout(playlistPollTimer);
+                notify({
+                    type: "playlist",
+                    requestId: request.requestId,
+                    playlistId: request.playlistId,
+                    videoIds: videoIds
+                });
+                return;
+            }
+
+            pendingPlaylistImport.attempts += 1;
+            if (pendingPlaylistImport.attempts >= 60) {
+                const request = pendingPlaylistImport;
+                pendingPlaylistImport = null;
+                notify({
+                    type: "playlistError",
+                    requestId: request.requestId,
+                    message: "YouTube no devolvió vídeos para esa playlist"
+                });
+                return;
+            }
+
+            playlistPollTimer = window.setTimeout(pollPlaylist, 250);
+        }
+
+        window.addEventListener("HybridWebViewMessageReceived", function (event) {
+            try {
+                const command = JSON.parse(event.detail.message);
+                if (command.type === "load") {
+                    playVideo(command.videoId);
+                } else if (command.type === "inspectPlaylist") {
+                    inspectPlaylist(command.playlistId, command.requestId);
+                } else if (command.type === "toggle" && player) {
+                    const state = player.getPlayerState();
+                    if (state === YT.PlayerState.PLAYING) player.pauseVideo();
+                    else player.playVideo();
+                } else if (command.type === "pause" && player) {
+                    player.pauseVideo();
+                }
+            } catch (error) {
+                notify({ type: "error", message: String(error) });
+            }
+        });
+
+        window.onYouTubeIframeAPIReady = function () {
+            player = new YT.Player("player", {
+                width: "100%",
+                height: "100%",
+                playerVars: {
+                    playsinline: 1,
+                    rel: 0,
+                    origin: window.location.origin
+                },
+                events: {
+                    onReady: function () {
+                        notify({ type: "ready" });
+                        if (pendingVideoId) playVideo(pendingVideoId);
+                        if (pendingPlaylistImport) {
+                            inspectPlaylist(
+                                pendingPlaylistImport.playlistId,
+                                pendingPlaylistImport.requestId);
+                        }
+                    },
+                    onStateChange: function (event) {
+                        notify({ type: "state", state: event.data });
+                        if (pendingPlaylistImport) {
+                            pendingPlaylistImport.stateChanged = true;
+                            pollPlaylist();
+                        }
+                    },
+                    onError: function (event) {
+                        if (pendingPlaylistImport) {
+                            pendingPlaylistImport.stateChanged = true;
+                            pollPlaylist();
+                            return;
+                        }
+                        notify({ type: "error", code: event.data });
+                    },
+                    onAutoplayBlocked: function () {
+                        notify({ type: "autoplayBlocked" });
+                    }
+                }
+            });
+        };
+
+        const script = document.createElement("script");
+        script.src = "https://www.youtube.com/iframe_api";
+        document.head.appendChild(script);
+
+        setInterval(function () {
+            if (!player || typeof player.getCurrentTime !== "function") return;
+            const state = player.getPlayerState();
+            if (state !== YT.PlayerState.PLAYING &&
+                state !== YT.PlayerState.PAUSED &&
+                state !== YT.PlayerState.BUFFERING) return;
+            notify({
+                type: "position",
+                seconds: player.getCurrentTime(),
+                playing: state === YT.PlayerState.PLAYING
+            });
+        }, 80);
+    </script>
+</body>
+</html>

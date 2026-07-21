@@ -1,0 +1,528 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="Drumless.Mobile.MainPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:viewModels="clr-namespace:Drumless.Mobile.ViewModels"
+    BackgroundColor="#0B0F14"
+    SafeAreaEdges="All">
+
+    <ContentPage.Resources>
+        <Style x:Key="ActionButton" TargetType="Button">
+            <Setter Property="BackgroundColor" Value="#1A222C" />
+            <Setter Property="TextColor" Value="#F4F7FA" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="13,9" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontFamily" Value="OpenSansSemibold" />
+        </Style>
+        <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource ActionButton}">
+            <Setter Property="WidthRequest" Value="44" />
+            <Setter Property="HeightRequest" Value="42" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontSize" Value="18" />
+        </Style>
+        <Style x:Key="ModeButton" TargetType="Button" BasedOn="{StaticResource ActionButton}">
+            <Setter Property="Padding" Value="8,8" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="HeightRequest" Value="40" />
+        </Style>
+    </ContentPage.Resources>
+
+    <Grid RowDefinitions="Auto,*" RowSpacing="0">
+        <Border
+            Grid.Row="0"
+            Margin="12,8,12,8"
+            Padding="10"
+            BackgroundColor="#131B24"
+            Stroke="#31404F"
+            StrokeThickness="1">
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="18" />
+            </Border.StrokeShape>
+            <Grid RowDefinitions="Auto,Auto" RowSpacing="6">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                    <VerticalStackLayout Spacing="0" VerticalOptions="Center">
+                        <Label
+                            Text="{Binding NowPlayingTitle}"
+                            TextColor="#F4F7FA"
+                            FontSize="14"
+                            FontFamily="OpenSansSemibold"
+                            LineBreakMode="TailTruncation"
+                            MaxLines="1" />
+                        <Label
+                            Text="{Binding NowPlayingSource}"
+                            TextColor="#91A0AF"
+                            FontSize="11" />
+                    </VerticalStackLayout>
+                    <HorizontalStackLayout Grid.Column="1" Spacing="6">
+                        <Button
+                            Text="◀"
+                            Style="{StaticResource IconButton}"
+                            Clicked="OnPreviousClicked"
+                            SemanticProperties.Hint="Pista anterior" />
+                        <Button
+                            Text="{Binding PlayPauseText}"
+                            Style="{StaticResource IconButton}"
+                            BackgroundColor="#176B5B"
+                            Clicked="OnPlayPauseClicked"
+                            SemanticProperties.Hint="Reproducir o pausar" />
+                        <Button
+                            Text="▶"
+                            Style="{StaticResource IconButton}"
+                            Clicked="OnNextClicked"
+                            SemanticProperties.Hint="Pista siguiente" />
+                    </HorizontalStackLayout>
+                </Grid>
+                <Button
+                    Grid.Row="1"
+                    Text="Ver reproductor de YouTube  ↓"
+                    Style="{StaticResource ActionButton}"
+                    IsVisible="{Binding IsYouTubeActive}"
+                    Clicked="OnShowYouTubePlayerClicked" />
+            </Grid>
+        </Border>
+
+        <ScrollView
+            x:Name="MainScroll"
+            Grid.Row="1"
+            VerticalScrollBarVisibility="Default">
+            <VerticalStackLayout Spacing="0">
+                <Grid Padding="18,10,18,12" ColumnDefinitions="*,Auto">
+                    <VerticalStackLayout Spacing="0">
+                        <Label
+                            Text="DRUMLESS PLAY"
+                            TextColor="#66E3C4"
+                            FontSize="12"
+                            CharacterSpacing="2.5"
+                            FontFamily="OpenSansSemibold" />
+                        <Label
+                            Text="Tu música, en un solo orden"
+                            TextColor="#F4F7FA"
+                            FontSize="21"
+                            FontFamily="OpenSansSemibold" />
+                    </VerticalStackLayout>
+                    <Button
+                        Grid.Column="1"
+                        Text="+ Playlist"
+                        Style="{StaticResource ActionButton}"
+                        BackgroundColor="#176B5B"
+                        Clicked="OnCreatePlaylistClicked"
+                        SemanticProperties.Hint="Crea una playlist nueva" />
+                </Grid>
+
+                <Border
+                    Margin="12,0,12,10"
+                    Padding="12"
+                    BackgroundColor="#111820"
+                    Stroke="#27313D"
+                    StrokeThickness="1">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="18" />
+                    </Border.StrokeShape>
+                    <VerticalStackLayout Spacing="10">
+                        <CollectionView
+                            x:Name="PlaylistList"
+                            HeightRequest="58"
+                            ItemsSource="{Binding Playlists}"
+                            SelectedItem="{Binding SelectedPlaylist, Mode=OneWay}"
+                            SelectionMode="Single"
+                            SelectionChanged="OnPlaylistSelectionChanged">
+                            <CollectionView.ItemsLayout>
+                                <LinearItemsLayout Orientation="Horizontal" ItemSpacing="8" />
+                            </CollectionView.ItemsLayout>
+                            <CollectionView.ItemTemplate>
+                                <DataTemplate x:DataType="viewModels:PlaylistViewModel">
+                                    <Border
+                                        Padding="12,7"
+                                        BackgroundColor="#1A222C"
+                                        Stroke="#31404F"
+                                        StrokeThickness="1">
+                                        <Border.StrokeShape>
+                                            <RoundRectangle CornerRadius="12" />
+                                        </Border.StrokeShape>
+                                        <VerticalStackLayout Spacing="0">
+                                            <Label
+                                                Text="{Binding Name}"
+                                                TextColor="#F4F7FA"
+                                                FontSize="13"
+                                                FontFamily="OpenSansSemibold"
+                                                LineBreakMode="TailTruncation"
+                                                MaxLines="1" />
+                                            <Label
+                                                Text="{Binding CountLabel}"
+                                                TextColor="#91A0AF"
+                                                FontSize="10" />
+                                        </VerticalStackLayout>
+                                    </Border>
+                                </DataTemplate>
+                            </CollectionView.ItemTemplate>
+                        </CollectionView>
+
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                            <VerticalStackLayout Spacing="0">
+                                <Label
+                                    Text="{Binding SelectedPlaylistTitle}"
+                                    TextColor="#F4F7FA"
+                                    FontSize="18"
+                                    FontFamily="OpenSansSemibold"
+                                    LineBreakMode="TailTruncation" />
+                                <Label
+                                    Text="{Binding SelectedPlaylistCount}"
+                                    TextColor="#91A0AF"
+                                    FontSize="11" />
+                            </VerticalStackLayout>
+                            <Button
+                                Grid.Column="1"
+                                Text="Renombrar"
+                                Style="{StaticResource ActionButton}"
+                                Clicked="OnRenamePlaylistClicked" />
+                            <Button
+                                Grid.Column="2"
+                                Text="Eliminar"
+                                Style="{StaticResource ActionButton}"
+                                TextColor="#FF9A9A"
+                                Clicked="OnDeletePlaylistClicked" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                            <Button
+                                Text="♫  Audio local"
+                                Style="{StaticResource ActionButton}"
+                                BackgroundColor="#176B5B"
+                                Clicked="OnAddLocalAudioClicked" />
+                            <Button
+                                Grid.Column="1"
+                                Text="▶  YouTube vídeo/lista"
+                                Style="{StaticResource ActionButton}"
+                                BackgroundColor="#7C2730"
+                                Clicked="OnAddYouTubeClicked" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*,*,*" ColumnSpacing="6">
+                            <Label
+                                Text="Modo"
+                                TextColor="#91A0AF"
+                                FontSize="11"
+                                VerticalTextAlignment="Center"
+                                Margin="0,0,4,0" />
+                            <Button
+                                Grid.Column="1"
+                                Text="Una pista"
+                                Style="{StaticResource ModeButton}"
+                                BackgroundColor="{Binding SingleModeBackground}"
+                                CommandParameter="0"
+                                Clicked="OnPlaybackModeClicked"
+                                SemanticProperties.Hint="Detiene la reproducción al terminar la pista actual" />
+                            <Button
+                                Grid.Column="2"
+                                Text="En orden"
+                                Style="{StaticResource ModeButton}"
+                                BackgroundColor="{Binding SequentialModeBackground}"
+                                CommandParameter="1"
+                                Clicked="OnPlaybackModeClicked"
+                                SemanticProperties.Hint="Continúa con la siguiente pista de la playlist" />
+                            <Button
+                                Grid.Column="3"
+                                Text="Aleatorio"
+                                Style="{StaticResource ModeButton}"
+                                BackgroundColor="{Binding ShuffleModeBackground}"
+                                CommandParameter="2"
+                                Clicked="OnPlaybackModeClicked"
+                                SemanticProperties.Hint="Reproduce las pistas restantes en orden aleatorio sin repetir" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+
+                <Grid
+                    Margin="12,0"
+                    RowDefinitions="Auto,Auto"
+                    ColumnDefinitions="*,Auto"
+                    ColumnSpacing="10"
+                    RowSpacing="5">
+                    <Label
+                        Text="{Binding TrackSelectionSummary}"
+                        TextColor="#91A0AF"
+                        FontSize="12"
+                        VerticalTextAlignment="Center" />
+                    <Button
+                        Grid.Column="1"
+                        Text="Seleccionar"
+                        Style="{StaticResource ActionButton}"
+                        BackgroundColor="#243442"
+                        IsVisible="{Binding IsTrackPlaybackMode}"
+                        Clicked="OnEnterTrackSelectionModeClicked"
+                        SemanticProperties.Hint="Activar el modo de selección" />
+                    <Grid
+                        Grid.Row="1"
+                        Grid.ColumnSpan="2"
+                        ColumnDefinitions="*,Auto,Auto"
+                        ColumnSpacing="6"
+                        IsVisible="{Binding IsTrackSelectionMode}">
+                        <Button
+                            Text="Seleccionar todos"
+                            Style="{StaticResource ActionButton}"
+                            BackgroundColor="#243442"
+                            Clicked="OnSelectAllTracksClicked" />
+                        <Button
+                            Grid.Column="1"
+                            Text="{Binding TrackActionsText}"
+                            Style="{StaticResource ActionButton}"
+                            BackgroundColor="#176B5B"
+                            IsEnabled="{Binding HasSelectedTracks}"
+                            Clicked="OnTrackActionsClicked"
+                            SemanticProperties.Hint="Acciones para las pistas seleccionadas" />
+                        <Button
+                            Grid.Column="2"
+                            Text="Hecho"
+                            Style="{StaticResource ActionButton}"
+                            Clicked="OnExitTrackSelectionModeClicked" />
+                    </Grid>
+                </Grid>
+
+                <ListView
+                    x:Name="TrackList"
+                    HeightRequest="470"
+                    Margin="12,0"
+                    ItemsSource="{Binding SelectedPlaylist.Items}"
+                    CachingStrategy="RecycleElement"
+                    HasUnevenRows="False"
+                    RowHeight="82"
+                    SeparatorVisibility="None"
+                    SelectionMode="None">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="viewModels:MediaItemViewModel">
+                            <ViewCell>
+                                <Border
+                                    Margin="0,0,0,7"
+                                    Padding="10"
+                                    BackgroundColor="#111820"
+                                    Stroke="#25313D"
+                                    StrokeThickness="1">
+                                    <Border.StrokeShape>
+                                        <RoundRectangle CornerRadius="14" />
+                                    </Border.StrokeShape>
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                                        <CheckBox
+                                            IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                            IsVisible="{Binding IsSelectionEnabled}"
+                                            InputTransparent="True"
+                                            Color="#66E3C4"
+                                            VerticalOptions="Center"
+                                            SemanticProperties.Description="Seleccionar pista" />
+                                        <Grid
+                                            Grid.Column="1"
+                                            ColumnDefinitions="40,*"
+                                            ColumnSpacing="10">
+                                            <Border
+                                                WidthRequest="40"
+                                                HeightRequest="40"
+                                                BackgroundColor="#1C2B31"
+                                                StrokeThickness="0">
+                                                <Border.StrokeShape>
+                                                    <RoundRectangle CornerRadius="12" />
+                                                </Border.StrokeShape>
+                                                <Label
+                                                    Text="{Binding KindIcon}"
+                                                    TextColor="#66E3C4"
+                                                    FontSize="18"
+                                                    HorizontalTextAlignment="Center"
+                                                    VerticalTextAlignment="Center" />
+                                            </Border>
+                                            <VerticalStackLayout
+                                                Grid.Column="1"
+                                                Spacing="0"
+                                                VerticalOptions="Center">
+                                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                                                    <Label
+                                                        Text="●"
+                                                        TextColor="#66E3C4"
+                                                        FontSize="9"
+                                                        IsVisible="{Binding IsCurrent}"
+                                                        VerticalTextAlignment="Center" />
+                                                    <Label
+                                                        Grid.Column="1"
+                                                        Text="{Binding Title}"
+                                                        TextColor="#F4F7FA"
+                                                        FontSize="14"
+                                                        FontFamily="OpenSansSemibold"
+                                                        LineBreakMode="TailTruncation"
+                                                        MaxLines="2" />
+                                                </Grid>
+                                                <Label
+                                                    Text="{Binding SourceLabel}"
+                                                    TextColor="#91A0AF"
+                                                    FontSize="11" />
+                                            </VerticalStackLayout>
+                                        </Grid>
+                                        <Button
+                                            Grid.ColumnSpan="2"
+                                            ZIndex="10"
+                                            Text=""
+                                            Padding="0"
+                                            BorderWidth="0"
+                                            BackgroundColor="Transparent"
+                                            CommandParameter="{Binding .}"
+                                            Pressed="OnTrackPressed"
+                                            Released="OnTrackReleased"
+                                            Clicked="OnTrackClicked"
+                                            SemanticProperties.Hint="Toca para reproducir o mantén pulsado para seleccionar" />
+                                    </Grid>
+                                </Border>
+                            </ViewCell>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <Border
+                    x:Name="PlayerSection"
+                    Margin="12,8,12,12"
+                    Padding="10"
+                    BackgroundColor="#131B24"
+                    Stroke="#31404F"
+                    StrokeThickness="1">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="18" />
+                    </Border.StrokeShape>
+                    <Grid RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="7">
+                        <Grid
+                            Grid.Row="0"
+                            HeightRequest="200"
+                            ColumnDefinitions="200,*"
+                            ColumnSpacing="8"
+                            IsVisible="{Binding IsYouTubeActive}">
+                            <HybridWebView
+                                x:Name="YouTubePlayer"
+                                WidthRequest="200"
+                                HeightRequest="200"
+                                MinimumWidthRequest="200"
+                                MinimumHeightRequest="200"
+                                RawMessageReceived="OnYouTubeMessageReceived" />
+
+                            <VerticalStackLayout
+                                Grid.Column="1"
+                                Spacing="5"
+                                VerticalOptions="Center">
+                                <Label
+                                    Text="{Binding NowPlayingTitle}"
+                                    TextColor="#F4F7FA"
+                                    FontSize="11"
+                                    FontFamily="OpenSansSemibold"
+                                    LineBreakMode="TailTruncation"
+                                    MaxLines="2" />
+                                <Label
+                                    Text="YouTube"
+                                    TextColor="#91A0AF"
+                                    FontSize="9" />
+                                <Button
+                                    Text="Abrir YouTube"
+                                    Style="{StaticResource ActionButton}"
+                                    Padding="4"
+                                    FontSize="9"
+                                    Clicked="OnOpenInYouTubeClicked" />
+                                <Button
+                                    Text="Cerrar vídeo"
+                                    Style="{StaticResource ActionButton}"
+                                    Padding="4"
+                                    FontSize="9"
+                                    TextColor="#FF9A9A"
+                                    Clicked="OnCloseYouTubeClicked" />
+                                <Button
+                                    Text="Volver a lista  ↑"
+                                    Style="{StaticResource ActionButton}"
+                                    Padding="4"
+                                    FontSize="9"
+                                    Clicked="OnShowTrackListClicked" />
+                            </VerticalStackLayout>
+                        </Grid>
+
+                        <Button
+                            x:Name="TimingToolsButton"
+                            Grid.Row="1"
+                            Text="Ritmo, latencia y batería  ▾"
+                            Style="{StaticResource ActionButton}"
+                            Clicked="OnTimingToolsClicked" />
+
+                        <Border
+                            x:Name="TimingTools"
+                            Grid.Row="2"
+                            IsVisible="False"
+                            Padding="9"
+                            BackgroundColor="#0E151C"
+                            Stroke="#263541"
+                            StrokeThickness="1">
+                            <Border.StrokeShape>
+                                <RoundRectangle CornerRadius="12" />
+                            </Border.StrokeShape>
+                            <VerticalStackLayout Spacing="7">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                    <VerticalStackLayout Spacing="0">
+                                        <Label
+                                            Text="{Binding TempoSummary}"
+                                            TextColor="#D8E0E8"
+                                            FontSize="11"
+                                            FontFamily="OpenSansSemibold"
+                                            LineBreakMode="TailTruncation"
+                                            MaxLines="1" />
+                                        <Label
+                                            Text="{Binding MidiStatus}"
+                                            TextColor="#7F8C99"
+                                            FontSize="9"
+                                            LineBreakMode="TailTruncation"
+                                            MaxLines="1" />
+                                    </VerticalStackLayout>
+                                    <Button
+                                        Grid.Column="1"
+                                        Text="{Binding EvaluationButtonText}"
+                                        Style="{StaticResource ActionButton}"
+                                        BackgroundColor="#176B5B"
+                                        Clicked="OnEvaluationClicked" />
+                                </Grid>
+
+                                <ScrollView Orientation="Horizontal">
+                                    <HorizontalStackLayout Spacing="6">
+                                        <Button
+                                            Text="{Binding TempoActionText}"
+                                            Style="{StaticResource ActionButton}"
+                                            Clicked="OnTempoActionClicked" />
+                                        <Button
+                                            Text="BPM manual"
+                                            Style="{StaticResource ActionButton}"
+                                            Clicked="OnManualTempoClicked" />
+                                        <Button
+                                            Text="Marcar pulso 1"
+                                            Style="{StaticResource ActionButton}"
+                                            Clicked="OnMarkFirstBeatClicked" />
+                                        <Button
+                                            Text="{Binding LatencySummary}"
+                                            Style="{StaticResource ActionButton}"
+                                            Clicked="OnLatencyClicked" />
+                                        <Button
+                                            Text="Reconectar MIDI"
+                                            Style="{StaticResource ActionButton}"
+                                            Clicked="OnReconnectMidiClicked" />
+                                    </HorizontalStackLayout>
+                                </ScrollView>
+
+                                <Label
+                                    Text="{Binding TimingResult}"
+                                    TextColor="#66E3C4"
+                                    FontSize="10"
+                                    LineBreakMode="TailTruncation"
+                                    MaxLines="2" />
+                            </VerticalStackLayout>
+                        </Border>
+
+                        <Label
+                            Grid.Row="3"
+                            Text="{Binding StatusMessage}"
+                            TextColor="#7F8C99"
+                            FontSize="10"
+                            LineBreakMode="TailTruncation"
+                            MaxLines="1" />
+                    </Grid>
+                </Border>
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ContentPage>

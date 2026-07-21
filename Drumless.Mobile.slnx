@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Drumless.Mobile.Core.Tests/Drumless.Mobile.Core.Tests.csproj" />
+  <Project Path="Drumless.Mobile.Core/Drumless.Mobile.Core.csproj" />
+  <Project Path="Drumless.Mobile/Drumless.Mobile.csproj" />
+</Solution>
