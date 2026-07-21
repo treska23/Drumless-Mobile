@@ -57,12 +57,10 @@ public sealed class PlatformAudioPlaybackService : IAudioPlaybackService
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
                     ReleasePlayer();
-                    PlaybackKeepAliveService.Stop();
                     PlaybackStateChanged?.Invoke(this, false);
                     PlaybackEnded?.Invoke(this, EventArgs.Empty);
                 });
 
-            PlaybackKeepAliveService.Start();
             _player.Start();
             PlaybackStateChanged?.Invoke(this, true);
         }
@@ -91,7 +89,6 @@ public sealed class PlatformAudioPlaybackService : IAudioPlaybackService
             }
             else
             {
-                PlaybackKeepAliveService.Start();
                 _player.Start();
                 PlaybackStateChanged?.Invoke(this, true);
             }
@@ -129,8 +126,6 @@ public sealed class PlatformAudioPlaybackService : IAudioPlaybackService
             ReleasePlayer();
             PlaybackStateChanged?.Invoke(this, false);
         }
-
-        PlaybackKeepAliveService.Stop();
     }
 
     private void ReleasePlayer()
