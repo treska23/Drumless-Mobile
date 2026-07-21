@@ -14,44 +14,66 @@ public partial class MainPage
     private MediaItem? _pendingExternalYouTubeItem;
 
     /// <summary>
-    /// HybridWebView raises RawMessageReceived from Android's JavaBridge thread.
-    /// Any playback transition triggered by that event can end up calling back into
-    /// the WebView, and Android requires every WebView method to run on the UI thread.
-    /// Rewire the XAML event handler through this dispatcher once the page handler exists.
+    /// OnHandlerChanged can run from InitializeComponent before MainPage's constructor has
+    /// assigned _viewModel. Keep it limited to UI event wiring; anything that touches the
+    /// view model is initialized from Appearing, after construction is complete.
     /// </summary>
     protected override void OnHandlerChanged()
     {
         base.OnHandlerChanged();
 
+        Appearing -= OnPageAppearingForYouTubeIntegration;
+        Appearing += OnPageAppearingForYouTubeIntegration;
+        RewireYouTubeMessageHandler();
+    }
+
+    private void OnPageAppearingForYouTubeIntegration(object? sender, EventArgs e)
+    {
+        RewireYouTubeMessageHandler();
+
+#if ANDROID
+        EnsureExternalYouTubeIntegrationInitialized();
+#endif
+    }
+
+    private void RewireYouTubeMessageHandler()
+    {
         if (YouTubePlayer is null)
         {
             return;
         }
 
+        // The XAML-generated hookup points directly at OnYouTubeMessageReceived. Replace it
+        // with a wrapper that always resumes on MAUI's main thread before touching WebView.
         YouTubePlayer.RawMessageReceived -= OnYouTubeMessageReceived;
         YouTubePlayer.RawMessageReceived -= OnYouTubeMessageReceivedOnMainThread;
         YouTubePlayer.RawMessageReceived += OnYouTubeMessageReceivedOnMainThread;
+    }
 
 #if ANDROID
-        if (!_externalYouTubeMonitorSubscribed)
+    private void EnsureExternalYouTubeIntegrationInitialized()
+    {
+        if (_externalYouTubeMonitorSubscribed)
         {
-            _externalYouTubeMonitorSubscribed = true;
-            ExternalYouTubePlaybackMonitor.PlaybackFinished += OnExternalYouTubePlaybackFinished;
-
-            // Keep this guard first in the event chain. It shuts down any external YouTube
-            // session before Drumless starts the newly requested local/embedded item.
-            _viewModel.PlaybackRequested -= OnPlaybackRequested;
-            _viewModel.PlaybackRequested -= OnPlaybackRequestedWhileExternalYouTubeActive;
-            _viewModel.PlaybackRequested += OnPlaybackRequestedWhileExternalYouTubeActive;
-            _viewModel.PlaybackRequested += OnPlaybackRequested;
-
-            _viewModel.StopPlaybackRequested -= OnStopPlaybackRequested;
-            _viewModel.StopPlaybackRequested -= OnStopRequestedWhileExternalYouTubeActive;
-            _viewModel.StopPlaybackRequested += OnStopRequestedWhileExternalYouTubeActive;
-            _viewModel.StopPlaybackRequested += OnStopPlaybackRequested;
+            return;
         }
-#endif
+
+        _externalYouTubeMonitorSubscribed = true;
+        ExternalYouTubePlaybackMonitor.PlaybackFinished += OnExternalYouTubePlaybackFinished;
+
+        // Keep this guard first in the event chain. It shuts down any external YouTube
+        // session before Drumless starts the newly requested local/embedded item.
+        _viewModel.PlaybackRequested -= OnPlaybackRequested;
+        _viewModel.PlaybackRequested -= OnPlaybackRequestedWhileExternalYouTubeActive;
+        _viewModel.PlaybackRequested += OnPlaybackRequestedWhileExternalYouTubeActive;
+        _viewModel.PlaybackRequested += OnPlaybackRequested;
+
+        _viewModel.StopPlaybackRequested -= OnStopPlaybackRequested;
+        _viewModel.StopPlaybackRequested -= OnStopRequestedWhileExternalYouTubeActive;
+        _viewModel.StopPlaybackRequested += OnStopRequestedWhileExternalYouTubeActive;
+        _viewModel.StopPlaybackRequested += OnStopPlaybackRequested;
     }
+#endif
 
     private void OnYouTubeMessageReceivedOnMainThread(
         object? sender,
