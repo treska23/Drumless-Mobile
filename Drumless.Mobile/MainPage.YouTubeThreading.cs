@@ -255,42 +255,67 @@ public partial class MainPage
 
     public async void ResumePendingExternalYouTubeAsync()
     {
-        if (_pendingExternalYouTubeItem is not { } item ||
-            !ExternalYouTubePlaybackMonitor.HasNotificationAccess)
+        try
         {
-            return;
-        }
+            if (_pendingExternalYouTubeItem is not { } item ||
+                !ExternalYouTubePlaybackMonitor.HasNotificationAccess)
+            {
+                return;
+            }
 
-        await StartTrackedExternalYouTubeAsync(item);
+            await StartTrackedExternalYouTubeAsync(item);
+        }
+        catch (Exception exception)
+        {
+            _pendingExternalYouTubeItem = null;
+            _externalYouTubeActive = false;
+            _externalYouTubeItemId = null;
+            _viewModel.ReportPlaybackFailure($"No se pudo reanudar YouTube: {exception.Message}");
+        }
     }
 
-    private async void OnExternalYouTubePlaybackFinished(object? sender, EventArgs e)
+    private void OnExternalYouTubePlaybackFinished(object? sender, EventArgs e) =>
+        _ = CompleteExternalYouTubePlaybackAsync();
+
+    private async Task CompleteExternalYouTubePlaybackAsync()
     {
-        if (!_externalYouTubeActive)
+        try
         {
-            return;
+            if (!_externalYouTubeActive)
+            {
+                return;
+            }
+
+            var finishedItemId = _externalYouTubeItemId;
+            _externalYouTubeActive = false;
+            _externalYouTubeItemId = null;
+
+            // A late MediaSession callback must never advance a newer manually selected track.
+            if (string.IsNullOrWhiteSpace(finishedItemId) ||
+                !string.Equals(_viewModel.CurrentItem?.Id, finishedItemId, StringComparison.Ordinal))
+            {
+                ExternalYouTubePlaybackMonitor.PauseYouTubePlayback();
+                return;
+            }
+
+            // Pause is already sent by the monitor. Reorder the exact live Drumless task without
+            // creating or relaunching MainActivity, then continue according to the selected mode.
+            var broughtToFront = DrumlessTaskForeground.BringToFront();
+            if (broughtToFront)
+            {
+                await Task.Delay(150);
+            }
+
+            _viewModel.ReportPlaybackState(false);
+            _viewModel.Next(automatic: true);
         }
-
-        var finishedItemId = _externalYouTubeItemId;
-        _externalYouTubeActive = false;
-        _externalYouTubeItemId = null;
-
-        // A late MediaSession callback must never advance a newer manually selected track.
-        if (string.IsNullOrWhiteSpace(finishedItemId) ||
-            !string.Equals(_viewModel.CurrentItem?.Id, finishedItemId, StringComparison.Ordinal))
+        catch (Exception exception)
         {
-            ExternalYouTubePlaybackMonitor.PauseYouTubePlayback();
-            return;
+            // Never let a background media-session completion tear down the MAUI process.
+            _externalYouTubeActive = false;
+            _externalYouTubeItemId = null;
+            _viewModel.ReportPlaybackFailure($"No se pudo continuar la playlist: {exception.Message}");
         }
-
-        // NotifyFinished has already paused YouTube. Bring the existing Drumless task back to
-        // the foreground before advancing, so the user returns to our app and the next playlist
-        // item starts from the screen that owns the playlist instead of leaving YouTube visible.
-        DrumlessTaskForeground.BringToFront();
-        await Task.Delay(150);
-
-        _viewModel.ReportPlaybackState(false);
-        _viewModel.Next(automatic: true);
     }
 
     private void OnPlaybackRequestedWhileExternalYouTubeActive(object? sender, MediaItem item)
