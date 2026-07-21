@@ -27,7 +27,7 @@ internal static class ExternalYouTubePlaybackMonitor
         {
             var context = Android.App.Application.Context;
             var component = ListenerComponent(context);
-            if (Build.VERSION.SdkInt >= BuildVersionCodes.O_Mr1)
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.OMr1)
             {
                 var manager = (NotificationManager?)context.GetSystemService(Context.NotificationService);
                 return manager?.IsNotificationListenerAccessGranted(component) == true;
