@@ -15,7 +15,9 @@ public partial class MainPage
 
     private void EnableYouTubeBrowserPlaybackIntegration()
     {
-        EnsureYouTubeBrowser();
+        // Do not construct Android WebView during MainPage startup. The browser is created lazily
+        // only when the first YouTube item is actually requested. This keeps normal app startup
+        // on the same stable path as before the internal-browser experiment.
 
         // Replace only the playback-routing handlers. The existing HybridWebView remains alive
         // as an internal helper for playlist inspection, but actual YouTube tracks now play in
