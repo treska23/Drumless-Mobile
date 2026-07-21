@@ -40,7 +40,7 @@
             <Border.StrokeShape>
                 <RoundRectangle CornerRadius="18" />
             </Border.StrokeShape>
-            <Grid RowDefinitions="Auto,Auto" RowSpacing="6">
+            <Grid>
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
                     <VerticalStackLayout Spacing="0" VerticalOptions="Center">
                         <Label
@@ -74,12 +74,6 @@
                             SemanticProperties.Hint="Pista siguiente" />
                     </HorizontalStackLayout>
                 </Grid>
-                <Button
-                    Grid.Row="1"
-                    Text="Ver reproductor de YouTube  ↓"
-                    Style="{StaticResource ActionButton}"
-                    IsVisible="{Binding IsYouTubeActive}"
-                    Clicked="OnShowYouTubePlayerClicked" />
             </Grid>
         </Border>
 
