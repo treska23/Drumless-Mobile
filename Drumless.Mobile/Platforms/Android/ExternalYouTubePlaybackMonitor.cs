@@ -57,8 +57,10 @@ internal static class ExternalYouTubePlaybackMonitor
             _tracking = true;
         }
 
-        // Keep Drumless alive while the official YouTube app owns the audio session.
         PlaybackKeepAliveService.Start();
+
+        // YouTube may still be creating/updating its MediaSession just after ACTION_VIEW.
+        // Attach immediately and keep retrying/polling from the listener until it appears.
         YouTubeMediaSessionListener.Instance?.AttachToYouTubeSession();
     }
 
@@ -70,7 +72,15 @@ internal static class ExternalYouTubePlaybackMonitor
             _generation++;
         }
 
-        YouTubeMediaSessionListener.Instance?.PauseAndDetachController();
+        if (YouTubeMediaSessionListener.Instance is { } listener)
+        {
+            listener.PauseAndDetachController();
+        }
+        else
+        {
+            PauseAnyYouTubeSession();
+        }
+
         PlaybackKeepAliveService.Stop();
     }
 
@@ -94,6 +104,18 @@ internal static class ExternalYouTubePlaybackMonitor
             _tracking = false;
         }
 
+        // Critical ordering: stop YouTube BEFORE telling Drumless to advance. Otherwise
+        // YouTube autoplay keeps its own next video playing and can retain audio focus while
+        // Drumless has already selected the following local/embedded track.
+        if (YouTubeMediaSessionListener.Instance is { } listener)
+        {
+            listener.PauseAndDetachController();
+        }
+        else
+        {
+            PauseAnyYouTubeSession();
+        }
+
         PlaybackKeepAliveService.Stop();
         MainThread.BeginInvokeOnMainThread(() =>
             PlaybackFinished?.Invoke(null, EventArgs.Empty));
@@ -101,6 +123,42 @@ internal static class ExternalYouTubePlaybackMonitor
 
     internal static ComponentName ListenerComponent(Context context) =>
         new(context, Java.Lang.Class.FromType(typeof(YouTubeMediaSessionListener)));
+
+    private static void PauseAnyYouTubeSession()
+    {
+        if (!HasNotificationAccess)
+        {
+            return;
+        }
+
+        try
+        {
+            var context = Android.App.Application.Context;
+            var manager = (MediaSessionManager?)context.GetSystemService(Context.MediaSessionService);
+            var component = ListenerComponent(context);
+            var controllers = manager?.GetActiveSessions(component);
+            if (controllers is null)
+            {
+                return;
+            }
+
+            foreach (var controller in controllers)
+            {
+                if (string.Equals(
+                        controller.PackageName,
+                        YouTubeMediaSessionListener.YouTubePackageName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    controller.GetTransportControls().Pause();
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // The listener service may be reconnecting. The normal controller path will
+            // pause the session as soon as Android exposes it again.
+        }
+    }
 }
 
 [Service(
@@ -110,9 +168,11 @@ internal static class ExternalYouTubePlaybackMonitor
 [IntentFilter(new[] { "android.service.notification.NotificationListenerService" })]
 public sealed class YouTubeMediaSessionListener : NotificationListenerService
 {
-    private const string YouTubePackage = "com.google.android.youtube";
+    internal const string YouTubePackageName = "com.google.android.youtube";
+    private readonly Handler _mainHandler = new(Looper.MainLooper!);
     private MediaController? _controller;
     private YouTubeControllerCallback? _callback;
+    private int _pollVersion;
 
     internal static YouTubeMediaSessionListener? Instance { get; private set; }
 
@@ -136,7 +196,7 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
     public override void OnNotificationPosted(StatusBarNotification? sbn)
     {
         base.OnNotificationPosted(sbn);
-        if (sbn?.PackageName == YouTubePackage &&
+        if (sbn?.PackageName == YouTubePackageName &&
             ExternalYouTubePlaybackMonitor.Snapshot().Tracking)
         {
             AttachToYouTubeSession();
@@ -160,15 +220,12 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
                 .FirstOrDefault(candidate =>
                     string.Equals(
                         candidate.PackageName,
-                        YouTubePackage,
+                        YouTubePackageName,
                         StringComparison.OrdinalIgnoreCase));
 
             if (controller is null)
             {
-                // YouTube may need a moment to create its MediaSession after ACTION_VIEW.
-                new Handler(Looper.MainLooper!).PostDelayed(
-                    () => AttachToYouTubeSession(),
-                    600);
+                _mainHandler.PostDelayed(() => AttachToYouTubeSession(), 500);
                 return;
             }
 
@@ -176,24 +233,67 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
                 _controller.Equals(controller) &&
                 _callback is not null)
             {
+                StartPolling(tracking.Generation);
                 return;
             }
 
             DetachController();
             _controller = controller;
             _callback = new YouTubeControllerCallback(controller, tracking.Generation);
-            controller.RegisterCallback(_callback, new Handler(Looper.MainLooper!));
+            controller.RegisterCallback(_callback, _mainHandler);
             _callback.Prime(controller.Metadata, controller.PlaybackState);
+            StartPolling(tracking.Generation);
         }
         catch (Exception)
         {
-            // If Android temporarily refuses access while the listener is reconnecting,
-            // the next YouTube notification will retry attaching the controller.
+            // Retry while tracking. This also covers the short reconnect window after the
+            // user grants notification-listener access.
+            _mainHandler.PostDelayed(() => AttachToYouTubeSession(), 700);
         }
+    }
+
+    private void StartPolling(int generation)
+    {
+        var version = ++_pollVersion;
+        _mainHandler.PostDelayed(() => PollYouTubeSession(version, generation), 500);
+    }
+
+    private void PollYouTubeSession(int version, int generation)
+    {
+        if (version != _pollVersion)
+        {
+            return;
+        }
+
+        var tracking = ExternalYouTubePlaybackMonitor.Snapshot();
+        if (!tracking.Tracking || tracking.Generation != generation)
+        {
+            return;
+        }
+
+        if (_controller is null || _callback is null)
+        {
+            AttachToYouTubeSession();
+            return;
+        }
+
+        try
+        {
+            _callback.Poll(_controller.Metadata, _controller.PlaybackState);
+        }
+        catch (Exception)
+        {
+            DetachController();
+            AttachToYouTubeSession();
+            return;
+        }
+
+        _mainHandler.PostDelayed(() => PollYouTubeSession(version, generation), 500);
     }
 
     internal void PauseAndDetachController()
     {
+        ++_pollVersion;
         if (_controller is not null)
         {
             try
@@ -211,6 +311,7 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
 
     internal void DetachController()
     {
+        ++_pollVersion;
         if (_controller is not null && _callback is not null)
         {
             try
@@ -230,8 +331,10 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
 
     private sealed class YouTubeControllerCallback : MediaController.Callback
     {
+        private const long StartupGraceMilliseconds = 2_500;
         private readonly MediaController _controller;
         private readonly int _generation;
+        private readonly long _startedAtMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         private string? _initialMetadataKey;
         private long _durationMilliseconds;
         private bool _hasPlayed;
@@ -246,6 +349,12 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
         public void Prime(MediaMetadata? metadata, PlaybackState? state)
         {
             ReadMetadata(metadata, allowFinish: false);
+            ReadPlaybackState(state);
+        }
+
+        public void Poll(MediaMetadata? metadata, PlaybackState? state)
+        {
+            ReadMetadata(metadata, allowFinish: true);
             ReadPlaybackState(state);
         }
 
@@ -283,26 +392,23 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
                 return;
             }
 
-            if (_initialMetadataKey is null)
+            var inStartupGrace =
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - _startedAtMilliseconds <
+                StartupGraceMilliseconds;
+
+            // ACTION_VIEW can briefly expose metadata from the previous YouTube video.
+            // During the startup grace window, keep replacing the baseline instead of
+            // interpreting that change as YouTube autoplay reaching the end.
+            if (_initialMetadataKey is null || inStartupGrace)
             {
                 _initialMetadataKey = key;
                 return;
             }
 
-            // If YouTube autoplay moves to another video, stop that unintended video and
-            // let Drumless choose the next item from its own playlist instead.
             if (allowFinish && _hasPlayed &&
                 !string.Equals(_initialMetadataKey, key, StringComparison.Ordinal))
             {
-                try
-                {
-                    _controller.GetTransportControls().Pause();
-                }
-                catch (Exception)
-                {
-                    // The session may already be changing; advancing Drumless is enough.
-                }
-                Finish();
+                PauseAndFinish();
             }
         }
 
@@ -323,7 +429,7 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
                 case PlaybackStateCode.None:
                     if (_hasPlayed)
                     {
-                        Finish();
+                        PauseAndFinish();
                     }
                     break;
 
@@ -331,17 +437,27 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
                     if (_hasPlayed && _durationMilliseconds > 0 &&
                         state.Position >= _durationMilliseconds - 2_000)
                     {
-                        Finish();
+                        PauseAndFinish();
                     }
                     break;
             }
         }
 
-        private void Finish()
+        private void PauseAndFinish()
         {
             if (_finished)
             {
                 return;
+            }
+
+            try
+            {
+                _controller.GetTransportControls().Pause();
+            }
+            catch (Exception)
+            {
+                // The session may already be transitioning; NotifyFinished also performs
+                // a second best-effort pause before Drumless advances.
             }
 
             _finished = true;
