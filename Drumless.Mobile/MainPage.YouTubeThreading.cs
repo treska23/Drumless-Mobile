@@ -14,13 +14,9 @@ public partial class MainPage
         Appearing += OnPageAppearingForYouTubeIntegration;
         RewireYouTubeMessageHandler();
 
-        // OnHandlerChanged can run during InitializeComponent before _viewModel is assigned.
-        // Dispatch the routing change until construction has completed.
-        Dispatcher.Dispatch(() =>
-        {
-            RewireYouTubeMessageHandler();
-            EnableYouTubeBrowserPlaybackIntegration();
-        });
+        // Do not touch _viewModel or playback routing here. OnHandlerChanged can run from
+        // InitializeComponent before MainPage's constructor assigns its readonly services.
+        // The browser routing is enabled from Appearing, after construction is complete.
     }
 
     private void OnPageAppearingForYouTubeIntegration(object? sender, EventArgs e)
