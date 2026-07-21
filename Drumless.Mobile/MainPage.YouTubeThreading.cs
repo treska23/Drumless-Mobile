@@ -111,7 +111,7 @@ public partial class MainPage
             _pendingExternalYouTubeItem = item;
             var configure = await DisplayAlertAsync(
                 "Continuar automáticamente con YouTube",
-                "Este vídeo no admite reproducción dentro de Drumless. Para abrirlo en la app oficial de YouTube y volver automáticamente a la playlist cuando termine, activa una vez el acceso de Drumless Play a las notificaciones. Se usa para detectar el estado del reproductor de YouTube.",
+                "Este vídeo no admite reproducción dentro de Drumless. Para abrirlo en la app oficial de YouTube y continuar automáticamente la playlist cuando termine, activa una vez el acceso de Drumless Play a las notificaciones. Se usa para detectar el estado del reproductor de YouTube.",
                 "Configurar",
                 "Abrir sin seguimiento");
 
@@ -159,6 +159,9 @@ public partial class MainPage
             return;
         }
 
+        // Stop/pause the official YouTube session first so its own autoplay cannot
+        // compete with the next item selected by Drumless.
+        ExternalYouTubePlaybackMonitor.StopTracking();
         _externalYouTubeActive = false;
         _viewModel.ReportPlaybackState(false);
         _viewModel.Next(automatic: true);
