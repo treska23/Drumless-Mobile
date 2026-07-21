@@ -5,40 +5,33 @@ namespace Drumless.Mobile;
 
 internal static class DrumlessTaskForeground
 {
-    public static void BringToFront()
+    public static bool BringToFront()
     {
         try
         {
-            var context = Android.App.Application.Context;
-            var manager = (ActivityManager?)context.GetSystemService(Context.ActivityService);
-
-            // AppTask is scoped to this application, so prefer it over launching a new activity.
-            // This restores the existing Drumless task exactly as the user left it before YouTube
-            // was opened, preserving the current playlist and UI state.
-            var appTask = manager?.AppTasks?.FirstOrDefault();
-            if (appTask is not null)
+            var activity = MainActivity.Current;
+            if (activity is null || activity.IsFinishing || activity.IsDestroyed)
             {
-                appTask.MoveToFront();
-                return;
+                return false;
             }
 
-            // Fallback for devices/OEMs that do not expose the task through AppTasks.
-            var launchIntent = context.PackageManager?.GetLaunchIntentForPackage(context.PackageName);
-            if (launchIntent is null)
+            var manager = (ActivityManager?)activity.GetSystemService(Context.ActivityService);
+            if (manager is null)
             {
-                return;
+                return false;
             }
 
-            launchIntent.AddFlags(
-                ActivityFlags.NewTask |
-                ActivityFlags.SingleTop |
-                ActivityFlags.ReorderToFront);
-            context.StartActivity(launchIntent);
+            // Use the exact task that owns the live MAUI activity. The previous AppTasks-based
+            // implementation could select/relaunch a stale task on some devices. Here we only
+            // reorder Drumless' current task; no new MainActivity instance is created.
+            manager.MoveTaskToFront(activity.TaskId, (MoveTaskFlags)0);
+            return true;
         }
         catch (Exception)
         {
-            // Returning to the UI is best-effort. Playlist sequencing must continue even if
-            // Android or the device manufacturer blocks a programmatic foreground transition.
+            // Returning to the UI is best-effort. Playlist sequencing must keep running even if
+            // Android refuses to reorder the task in the current background state.
+            return false;
         }
     }
 }
