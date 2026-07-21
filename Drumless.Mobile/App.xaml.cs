@@ -16,7 +16,9 @@ public partial class App : Application
         // kept alive by the Android foreground playback service and external YouTube
         // playback is handled by the official YouTube app when needed.
         var window = new Window(_mainPage);
+#if ANDROID
         window.Resumed += (_, _) => _mainPage.ResumePendingExternalYouTubeAsync();
+#endif
         return window;
     }
 }
