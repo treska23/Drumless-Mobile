@@ -35,8 +35,19 @@ public partial class MainPage
         {
             _externalYouTubeMonitorSubscribed = true;
             ExternalYouTubePlaybackMonitor.PlaybackFinished += OnExternalYouTubePlaybackFinished;
+
+            // These handlers must run BEFORE the normal playback handlers. Otherwise a new
+            // Drumless item can start while the previous video is still owning YouTube's
+            // MediaSession/audio focus.
+            _viewModel.PlaybackRequested -= OnPlaybackRequested;
+            _viewModel.PlaybackRequested -= OnPlaybackRequestedWhileExternalYouTubeActive;
             _viewModel.PlaybackRequested += OnPlaybackRequestedWhileExternalYouTubeActive;
+            _viewModel.PlaybackRequested += OnPlaybackRequested;
+
+            _viewModel.StopPlaybackRequested -= OnStopPlaybackRequested;
+            _viewModel.StopPlaybackRequested -= OnStopRequestedWhileExternalYouTubeActive;
             _viewModel.StopPlaybackRequested += OnStopRequestedWhileExternalYouTubeActive;
+            _viewModel.StopPlaybackRequested += OnStopPlaybackRequested;
         }
 #endif
     }
@@ -133,8 +144,11 @@ public partial class MainPage
     {
         _pendingExternalYouTubeItem = null;
         _externalYouTubeActive = true;
-        ExternalYouTubePlaybackMonitor.BeginTracking();
+
+        // Launch the requested video first. Starting the monitor before ACTION_VIEW can attach
+        // to stale metadata from the previously playing YouTube video.
         await OpenInYouTubeAsync(item);
+        ExternalYouTubePlaybackMonitor.BeginTracking();
 
         // OpenInYouTubeAsync marks the internal player as paused. From Drumless' point
         // of view the current playlist item is nevertheless playing in the YouTube app.
@@ -174,6 +188,8 @@ public partial class MainPage
             return;
         }
 
+        // This handler is deliberately first in the PlaybackRequested invocation list.
+        // Pause YouTube before Drumless starts the newly selected local/embedded item.
         _externalYouTubeActive = false;
         ExternalYouTubePlaybackMonitor.StopTracking();
     }
