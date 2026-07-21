@@ -6,7 +6,7 @@ namespace Drumless.Mobile;
 
 [Service(
     Exported = false,
-    ForegroundServiceType = Android.Content.PM.ForegroundService.MediaPlayback)]
+    ForegroundServiceType = Android.Content.PM.ForegroundService.TypeMediaPlayback)]
 public sealed class PlaybackKeepAliveService : Service
 {
     private const string ChannelId = "drumless_playback";
@@ -68,7 +68,7 @@ public sealed class PlaybackKeepAliveService : Service
             "Reproducción de Drumless Play",
             NotificationImportance.Low)
         {
-            Description = "Mantiene las pistas locales reproduciéndose en segundo plano"
+            Description = "Mantiene la playlist de Drumless Play activa en segundo plano"
         };
         manager?.CreateNotificationChannel(channel);
     }
@@ -89,7 +89,7 @@ public sealed class PlaybackKeepAliveService : Service
 
         return builder
             .SetContentTitle("Drumless Play")
-            .SetContentText("Reproduciendo en segundo plano")
+            .SetContentText("Playlist activa en segundo plano")
             .SetSmallIcon(Resource.Mipmap.appicon)
             .SetContentIntent(pendingIntent)
             .SetOngoing(true)
