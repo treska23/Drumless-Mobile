@@ -10,19 +10,30 @@ public partial class MainPage
     {
         base.OnHandlerChanged();
 
-        Appearing -= OnPageAppearingForYouTubeIntegration;
-        Appearing += OnPageAppearingForYouTubeIntegration;
+        Loaded -= OnPageLoadedForYouTubeIntegration;
+        Loaded += OnPageLoadedForYouTubeIntegration;
         RewireYouTubeMessageHandler();
 
-        // Do not touch _viewModel or playback routing here. OnHandlerChanged can run from
-        // InitializeComponent before MainPage's constructor assigns its readonly services.
-        // The browser routing is enabled from Appearing, after construction is complete.
+        // Never touch _viewModel or playback routing here. OnHandlerChanged can run during
+        // InitializeComponent, before MainPage's constructor has finished assigning services.
     }
 
-    private void OnPageAppearingForYouTubeIntegration(object? sender, EventArgs e)
+    private void OnPageLoadedForYouTubeIntegration(object? sender, EventArgs e)
     {
+        // Loaded runs after the MainPage constructor has completed, including the original
+        // playback-event subscriptions. Replace them here once, deterministically, so the old
+        // embedded/external playback route cannot remain subscribed alongside the browser route.
+        Loaded -= OnPageLoadedForYouTubeIntegration;
         RewireYouTubeMessageHandler();
-        EnableYouTubeBrowserPlaybackIntegration();
+
+        try
+        {
+            EnableYouTubeBrowserPlaybackIntegration();
+        }
+        catch (Exception exception)
+        {
+            _viewModel.ReportPlaybackFailure($"No se pudo preparar el reproductor de YouTube: {exception.Message}");
+        }
     }
 
     private void RewireYouTubeMessageHandler()
