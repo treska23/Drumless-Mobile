@@ -12,13 +12,8 @@ public partial class App : Application
 
     protected override Window CreateWindow(IActivationState? activationState)
     {
-        // Do not pause playback merely because the window loses focus. External fallback
-        // videos are handled by the official YouTube app, while local playback currently
-        // remains owned by Drumless' in-process audio player.
-        var window = new Window(_mainPage);
-#if ANDROID
-        window.Resumed += (_, _) => _mainPage.ResumePendingExternalYouTubeAsync();
-#endif
-        return window;
+        // YouTube playback now remains inside Drumless' own WebView, so there is no external
+        // YouTube-app handoff to resume when the window returns to the foreground.
+        return new Window(_mainPage);
     }
 }
