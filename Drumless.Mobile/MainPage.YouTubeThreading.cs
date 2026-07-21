@@ -59,19 +59,11 @@ public partial class MainPage
         }
 
         _externalYouTubeMonitorSubscribed = true;
-        ExternalYouTubePlaybackMonitor.PlaybackFinished += OnExternalYouTubePlaybackFinished;
 
-        // Keep this guard first in the event chain. It only shuts down an actually active
-        // external YouTube session before Drumless starts the newly requested item.
-        _viewModel.PlaybackRequested -= OnPlaybackRequested;
-        _viewModel.PlaybackRequested -= OnPlaybackRequestedWhileExternalYouTubeActive;
-        _viewModel.PlaybackRequested += OnPlaybackRequestedWhileExternalYouTubeActive;
-        _viewModel.PlaybackRequested += OnPlaybackRequested;
-
-        _viewModel.StopPlaybackRequested -= OnStopPlaybackRequested;
-        _viewModel.StopPlaybackRequested -= OnStopRequestedWhileExternalYouTubeActive;
-        _viewModel.StopPlaybackRequested += OnStopRequestedWhileExternalYouTubeActive;
-        _viewModel.StopPlaybackRequested += OnStopPlaybackRequested;
+        // Actual YouTube tracks now stay inside Drumless in a normal WebView that loads the
+        // complete mobile YouTube page. The old external-app MediaSession path is left dormant.
+        // HybridWebView remains available only for the existing playlist-inspection helper.
+        EnableYouTubeBrowserPlaybackIntegration();
     }
 #endif
 
