@@ -264,7 +264,7 @@ public partial class MainPage
         await StartTrackedExternalYouTubeAsync(item);
     }
 
-    private void OnExternalYouTubePlaybackFinished(object? sender, EventArgs e)
+    private async void OnExternalYouTubePlaybackFinished(object? sender, EventArgs e)
     {
         if (!_externalYouTubeActive)
         {
@@ -283,8 +283,12 @@ public partial class MainPage
             return;
         }
 
-        // NotifyFinished has already paused YouTube. From this point Drumless owns sequencing
-        // again, so Next() can hand off to local audio, embedded YouTube, or another fallback.
+        // NotifyFinished has already paused YouTube. Bring the existing Drumless task back to
+        // the foreground before advancing, so the user returns to our app and the next playlist
+        // item starts from the screen that owns the playlist instead of leaving YouTube visible.
+        DrumlessTaskForeground.BringToFront();
+        await Task.Delay(150);
+
         _viewModel.ReportPlaybackState(false);
         _viewModel.Next(automatic: true);
     }
