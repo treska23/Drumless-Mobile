@@ -1,39 +1,32 @@
+using System.Text.Json;
+
 namespace Drumless.Mobile;
 
 public partial class MainPage
 {
     /// <summary>
-    /// Keep HybridWebView callbacks on MAUI's main thread. Actual YouTube playback now stays
-    /// inside Drumless in the full mobile-site WebView; HybridWebView remains only as a helper.
+    /// The HybridWebView is now only a hidden helper for playlist inspection. Actual YouTube
+    /// playback is owned exclusively by MainPage.YouTubeBrowser.cs.
     /// </summary>
     protected override void OnHandlerChanged()
     {
         base.OnHandlerChanged();
 
-        Loaded -= OnPageLoadedForYouTubeIntegration;
-        Loaded += OnPageLoadedForYouTubeIntegration;
-        RewireYouTubeMessageHandler();
+        Loaded -= OnPageReadyForYouTubeBrowser;
+        Loaded += OnPageReadyForYouTubeBrowser;
+        Appearing -= OnPageReadyForYouTubeBrowser;
+        Appearing += OnPageReadyForYouTubeBrowser;
 
-        // Never touch _viewModel or playback routing here. OnHandlerChanged can run during
-        // InitializeComponent, before MainPage's constructor has finished assigning services.
+        RewireYouTubeMessageHandler();
     }
 
-    private void OnPageLoadedForYouTubeIntegration(object? sender, EventArgs e)
+    private void OnPageReadyForYouTubeBrowser(object? sender, EventArgs e)
     {
-        // Loaded runs after the MainPage constructor has completed, including the original
-        // playback-event subscriptions. Replace them here once, deterministically, so the old
-        // embedded/external playback route cannot remain subscribed alongside the browser route.
-        Loaded -= OnPageLoadedForYouTubeIntegration;
+        // Both Loaded and Appearing happen after construction. Enabling twice is harmless because
+        // EnableYouTubeBrowserPlaybackIntegration removes every relevant handler before re-adding
+        // the browser route.
         RewireYouTubeMessageHandler();
-
-        try
-        {
-            EnableYouTubeBrowserPlaybackIntegration();
-        }
-        catch (Exception exception)
-        {
-            _viewModel.ReportPlaybackFailure($"No se pudo preparar el reproductor de YouTube: {exception.Message}");
-        }
+        EnableYouTubeBrowserPlaybackIntegration();
     }
 
     private void RewireYouTubeMessageHandler()
@@ -59,8 +52,45 @@ public partial class MainPage
             return;
         }
 
-        // The old Android external-app fallback is deliberately gone. Errors from this helper
-        // stay inside Drumless and are handled by the normal HybridWebView error path.
-        OnYouTubeMessageReceived(sender, e);
+        if (string.IsNullOrWhiteSpace(e.Message))
+        {
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(e.Message);
+            var root = document.RootElement;
+            var type = root.TryGetProperty("type", out var typeElement)
+                ? typeElement.GetString()
+                : null;
+
+            switch (type)
+            {
+                case "ready":
+                    // Ready is needed only so the helper can inspect imported playlists. Never
+                    // call TryStartPendingYouTube here: embedded video playback is intentionally
+                    // disabled now.
+                    _youtubeReady = true;
+                    TryStartPendingPlaylistImport();
+                    return;
+
+                case "playlist":
+                case "playlistError":
+                    // These are the only messages still owned by the HybridWebView helper.
+                    OnYouTubeMessageReceived(sender, e);
+                    return;
+
+                default:
+                    // Ignore state/position/error/autoplayBlocked from the old embedded player.
+                    // In particular, an iframe error must never show the old "Abrir en YouTube /
+                    // Saltar pista" dialog again.
+                    return;
+            }
+        }
+        catch (JsonException)
+        {
+            // Ignore malformed helper messages. They are no longer part of playback control.
+        }
     }
 }
