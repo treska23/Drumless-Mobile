@@ -22,18 +22,19 @@ public partial class MainPage
 
     private void OnPageReadyForYouTubeBrowser(object? sender, EventArgs e)
     {
-        // Both Loaded and Appearing happen after construction. Enabling twice is harmless because
-        // EnableYouTubeBrowserPlaybackIntegration removes every relevant handler before re-adding
-        // the browser route.
         RewireYouTubeMessageHandler();
 
-        // The old iframe player must never be visible or become the active playback surface again.
-        // Keep the control alive only because the playlist importer still uses its JS bridge.
+        // The old iframe player must never become visible or own playback again. Hide its whole
+        // 200px XAML container, not just the HybridWebView itself, so the track list keeps its space.
         _pendingYouTubeVideoId = null;
         YouTubePlayer.IsVisible = false;
         YouTubePlayer.InputTransparent = true;
         YouTubePlayer.Opacity = 0;
-        SendYouTubeCommand(new { type = "pause" });
+        if (YouTubePlayer.Parent is VisualElement legacyPlayerSurface)
+        {
+            legacyPlayerSurface.RemoveBinding(VisualElement.IsVisibleProperty);
+            legacyPlayerSurface.IsVisible = false;
+        }
 
         EnableYouTubeBrowserPlaybackIntegration();
     }
@@ -78,8 +79,7 @@ public partial class MainPage
             {
                 case "ready":
                     // Ready is needed only so the helper can inspect imported playlists. Never
-                    // call TryStartPendingYouTube here: embedded video playback is intentionally
-                    // disabled now.
+                    // call TryStartPendingYouTube here: embedded video playback is disabled.
                     _youtubeReady = true;
                     TryStartPendingPlaylistImport();
                     return;
@@ -91,9 +91,7 @@ public partial class MainPage
                     return;
 
                 default:
-                    // Ignore state/position/error/autoplayBlocked from the old embedded player.
-                    // In particular, an iframe error must never show the old "Abrir en YouTube /
-                    // Saltar pista" dialog again.
+                    // Ignore state/position/error/autoplayBlocked from the obsolete iframe player.
                     return;
             }
         }
