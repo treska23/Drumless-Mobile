@@ -56,9 +56,13 @@ public sealed class PlatformAudioPlaybackService : IAudioPlaybackService
             _player.Completion += (_, _) =>
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
+                    ReleasePlayer();
+                    PlaybackKeepAliveService.Stop();
                     PlaybackStateChanged?.Invoke(this, false);
                     PlaybackEnded?.Invoke(this, EventArgs.Empty);
                 });
+
+            PlaybackKeepAliveService.Start();
             _player.Start();
             PlaybackStateChanged?.Invoke(this, true);
         }
@@ -87,6 +91,7 @@ public sealed class PlatformAudioPlaybackService : IAudioPlaybackService
             }
             else
             {
+                PlaybackKeepAliveService.Start();
                 _player.Start();
                 PlaybackStateChanged?.Invoke(this, true);
             }
@@ -110,24 +115,34 @@ public sealed class PlatformAudioPlaybackService : IAudioPlaybackService
 
     public void Stop()
     {
+        if (_player is not null)
+        {
+            try
+            {
+                _player.Stop();
+            }
+            catch (Java.Lang.IllegalStateException)
+            {
+                // El reproductor todavía no había alcanzado un estado reproducible.
+            }
+
+            ReleasePlayer();
+            PlaybackStateChanged?.Invoke(this, false);
+        }
+
+        PlaybackKeepAliveService.Stop();
+    }
+
+    private void ReleasePlayer()
+    {
         if (_player is null)
         {
             return;
         }
 
-        try
-        {
-            _player.Stop();
-        }
-        catch (Java.Lang.IllegalStateException)
-        {
-            // El reproductor todavía no había alcanzado un estado reproducible.
-        }
-
         _player.Release();
         _player.Dispose();
         _player = null;
-        PlaybackStateChanged?.Invoke(this, false);
     }
 
     public void Dispose() => Stop();
