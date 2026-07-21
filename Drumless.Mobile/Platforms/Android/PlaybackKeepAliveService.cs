@@ -1,12 +1,13 @@
 using Android.App;
 using Android.Content;
+using Android.Content.PM;
 using Android.OS;
 
 namespace Drumless.Mobile;
 
 [Service(
     Exported = false,
-    ForegroundServiceType = Android.Content.PM.ForegroundService.TypeMediaPlayback)]
+    ForegroundServiceType = ForegroundService.TypeMediaPlayback)]
 public sealed class PlaybackKeepAliveService : Service
 {
     private const string ChannelId = "drumless_playback";
@@ -16,7 +17,11 @@ public sealed class PlaybackKeepAliveService : Service
     {
         base.OnCreate();
         EnsureNotificationChannel();
-        StartForeground(NotificationId, BuildNotification());
+
+        // Android gives a service launched through StartForegroundService only a few
+        // seconds to promote itself. Do it immediately, and explicitly provide the
+        // mediaPlayback type on API 29+ so Android 14+ can validate the declaration.
+        PromoteToForeground();
     }
 
     public override StartCommandResult OnStartCommand(
@@ -24,7 +29,8 @@ public sealed class PlaybackKeepAliveService : Service
         StartCommandFlags flags,
         int startId)
     {
-        StartForeground(NotificationId, BuildNotification());
+        // Re-promoting is harmless and also covers restarts of a sticky service.
+        PromoteToForeground();
         return StartCommandResult.Sticky;
     }
 
@@ -48,6 +54,22 @@ public sealed class PlaybackKeepAliveService : Service
     {
         var context = Android.App.Application.Context;
         context.StopService(new Intent(context, typeof(PlaybackKeepAliveService)));
+    }
+
+    private void PromoteToForeground()
+    {
+        var notification = BuildNotification();
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.Q)
+        {
+            StartForeground(
+                NotificationId,
+                notification,
+                ForegroundService.TypeMediaPlayback);
+        }
+        else
+        {
+            StartForeground(NotificationId, notification);
+        }
     }
 
     private void EnsureNotificationChannel()
