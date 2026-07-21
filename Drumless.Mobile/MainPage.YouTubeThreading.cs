@@ -2,12 +2,6 @@ namespace Drumless.Mobile;
 
 public partial class MainPage
 {
-    // Kept temporarily only because MainPage.YouTubeBrowser still contains a defensive check from
-    // the previous implementation. No code sets this state anymore, so the external-app path is
-    // unreachable while the internal browser prototype is active.
-    private bool _externalYouTubeActive;
-    private string? _externalYouTubeItemId;
-
     /// <summary>
     /// Keep HybridWebView callbacks on MAUI's main thread. Actual YouTube playback now stays
     /// inside Drumless in the full mobile-site WebView; HybridWebView remains only as a helper.
