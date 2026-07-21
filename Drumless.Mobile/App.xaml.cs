@@ -15,6 +15,8 @@ public partial class App : Application
         // Playback must not be tied to the visual window lifecycle. Local tracks are
         // kept alive by the Android foreground playback service and external YouTube
         // playback is handled by the official YouTube app when needed.
-        return new Window(_mainPage);
+        var window = new Window(_mainPage);
+        window.Resumed += (_, _) => _mainPage.ResumePendingExternalYouTubeAsync();
+        return window;
     }
 }
