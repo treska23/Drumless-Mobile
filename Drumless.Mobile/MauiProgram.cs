@@ -10,9 +10,8 @@ public static class MauiProgram
     public static MauiApp CreateMauiApp()
     {
 #if ANDROID
-        // HybridWebView uses Android's native WebView. By default Android requires a
-        // user gesture before media playback, which prevents a YouTube item reached
-        // automatically from a playlist from starting on its own.
+        // Both web surfaces use Android's native WebView. Relax the gesture requirement so a
+        // playlist transition initiated by Drumless can start the next YouTube item automatically.
         Microsoft.Maui.Handlers.HybridWebViewHandler.Mapper.AppendToMapping(
             "AllowMediaAutoplay",
             (handler, _) =>
@@ -20,6 +19,19 @@ public static class MauiProgram
                 if (handler.PlatformView is Android.Webkit.WebView webView)
                 {
                     webView.Settings.MediaPlaybackRequiresUserGesture = false;
+                }
+            });
+
+        Microsoft.Maui.Handlers.WebViewHandler.Mapper.AppendToMapping(
+            "AllowMediaAutoplay",
+            (handler, _) =>
+            {
+                if (handler.PlatformView is Android.Webkit.WebView webView)
+                {
+                    webView.Settings.MediaPlaybackRequiresUserGesture = false;
+                    webView.Settings.DomStorageEnabled = true;
+                    Android.Webkit.CookieManager.Instance.SetAcceptCookie(true);
+                    Android.Webkit.CookieManager.Instance.SetAcceptThirdPartyCookies(webView, true);
                 }
             });
 #endif
