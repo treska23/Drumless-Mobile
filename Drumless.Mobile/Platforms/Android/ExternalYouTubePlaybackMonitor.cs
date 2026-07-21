@@ -70,7 +70,7 @@ internal static class ExternalYouTubePlaybackMonitor
             _generation++;
         }
 
-        YouTubeMediaSessionListener.Instance?.DetachController();
+        YouTubeMediaSessionListener.Instance?.PauseAndDetachController();
         PlaybackKeepAliveService.Stop();
     }
 
@@ -107,7 +107,7 @@ internal static class ExternalYouTubePlaybackMonitor
     Label = "Drumless Play media monitor",
     Permission = Android.Manifest.Permission.BindNotificationListenerService,
     Exported = true)]
-[IntentFilter(["android.service.notification.NotificationListenerService"])]
+[IntentFilter(new[] { "android.service.notification.NotificationListenerService" })]
 public sealed class YouTubeMediaSessionListener : NotificationListenerService
 {
     private const string YouTubePackage = "com.google.android.youtube";
@@ -166,12 +166,14 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
             if (controller is null)
             {
                 // YouTube may need a moment to create its MediaSession after ACTION_VIEW.
-                new Handler(Looper.MainLooper!).PostDelayed(AttachToYouTubeSession, 600);
+                new Handler(Looper.MainLooper!).PostDelayed(
+                    () => AttachToYouTubeSession(),
+                    600);
                 return;
             }
 
             if (_controller is not null &&
-                _controller.SessionToken?.Equals(controller.SessionToken) == true &&
+                _controller.Equals(controller) &&
                 _callback is not null)
             {
                 return;
@@ -188,6 +190,23 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
             // If Android temporarily refuses access while the listener is reconnecting,
             // the next YouTube notification will retry attaching the controller.
         }
+    }
+
+    internal void PauseAndDetachController()
+    {
+        if (_controller is not null)
+        {
+            try
+            {
+                _controller.GetTransportControls().Pause();
+            }
+            catch (Exception)
+            {
+                // The remote YouTube session may already have disappeared.
+            }
+        }
+
+        DetachController();
     }
 
     internal void DetachController()
@@ -277,7 +296,7 @@ public sealed class YouTubeMediaSessionListener : NotificationListenerService
             {
                 try
                 {
-                    _controller.TransportControls?.Pause();
+                    _controller.GetTransportControls().Pause();
                 }
                 catch (Exception)
                 {
