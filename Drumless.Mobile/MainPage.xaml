@@ -280,99 +280,95 @@
                     </Grid>
                 </Grid>
 
-                <ListView
+                <CollectionView
                     x:Name="TrackList"
                     HeightRequest="470"
                     Margin="12,0"
                     ItemsSource="{Binding SelectedPlaylist.Items}"
-                    CachingStrategy="RecycleElement"
-                    HasUnevenRows="False"
-                    RowHeight="82"
-                    SeparatorVisibility="None"
+                    ItemsLayout="VerticalList"
                     SelectionMode="None">
-                    <ListView.ItemTemplate>
+                    <CollectionView.ItemTemplate>
                         <DataTemplate x:DataType="viewModels:MediaItemViewModel">
-                            <ViewCell>
-                                <Border
-                                    Margin="0,0,0,7"
-                                    Padding="10"
-                                    BackgroundColor="#111820"
-                                    Stroke="#25313D"
-                                    StrokeThickness="1">
-                                    <Border.StrokeShape>
-                                        <RoundRectangle CornerRadius="14" />
-                                    </Border.StrokeShape>
-                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                                        <CheckBox
-                                            IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                            IsVisible="{Binding IsSelectionEnabled}"
-                                            InputTransparent="True"
-                                            Color="#66E3C4"
-                                            VerticalOptions="Center"
-                                            SemanticProperties.Description="Seleccionar pista" />
-                                        <Grid
+                            <Border
+                                Margin="0,0,0,7"
+                                Padding="10"
+                                HeightRequest="75"
+                                BackgroundColor="#111820"
+                                Stroke="#25313D"
+                                StrokeThickness="1">
+                                <Border.StrokeShape>
+                                    <RoundRectangle CornerRadius="14" />
+                                </Border.StrokeShape>
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                                    <CheckBox
+                                        IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                        IsVisible="{Binding IsSelectionEnabled}"
+                                        InputTransparent="True"
+                                        Color="#66E3C4"
+                                        VerticalOptions="Center"
+                                        SemanticProperties.Description="Seleccionar pista" />
+                                    <Grid
+                                        Grid.Column="1"
+                                        ColumnDefinitions="40,*"
+                                        ColumnSpacing="10">
+                                        <Border
+                                            WidthRequest="40"
+                                            HeightRequest="40"
+                                            BackgroundColor="#1C2B31"
+                                            StrokeThickness="0">
+                                            <Border.StrokeShape>
+                                                <RoundRectangle CornerRadius="12" />
+                                            </Border.StrokeShape>
+                                            <Label
+                                                Text="{Binding KindIcon}"
+                                                TextColor="#66E3C4"
+                                                FontSize="18"
+                                                HorizontalTextAlignment="Center"
+                                                VerticalTextAlignment="Center" />
+                                        </Border>
+                                        <VerticalStackLayout
                                             Grid.Column="1"
-                                            ColumnDefinitions="40,*"
-                                            ColumnSpacing="10">
-                                            <Border
-                                                WidthRequest="40"
-                                                HeightRequest="40"
-                                                BackgroundColor="#1C2B31"
-                                                StrokeThickness="0">
-                                                <Border.StrokeShape>
-                                                    <RoundRectangle CornerRadius="12" />
-                                                </Border.StrokeShape>
+                                            Spacing="0"
+                                            VerticalOptions="Center">
+                                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
                                                 <Label
-                                                    Text="{Binding KindIcon}"
+                                                    Text="●"
                                                     TextColor="#66E3C4"
-                                                    FontSize="18"
-                                                    HorizontalTextAlignment="Center"
+                                                    FontSize="9"
+                                                    IsVisible="{Binding IsCurrent}"
                                                     VerticalTextAlignment="Center" />
-                                            </Border>
-                                            <VerticalStackLayout
-                                                Grid.Column="1"
-                                                Spacing="0"
-                                                VerticalOptions="Center">
-                                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
-                                                    <Label
-                                                        Text="●"
-                                                        TextColor="#66E3C4"
-                                                        FontSize="9"
-                                                        IsVisible="{Binding IsCurrent}"
-                                                        VerticalTextAlignment="Center" />
-                                                    <Label
-                                                        Grid.Column="1"
-                                                        Text="{Binding Title}"
-                                                        TextColor="#F4F7FA"
-                                                        FontSize="14"
-                                                        FontFamily="OpenSansSemibold"
-                                                        LineBreakMode="TailTruncation"
-                                                        MaxLines="2" />
-                                                </Grid>
                                                 <Label
-                                                    Text="{Binding SourceLabel}"
-                                                    TextColor="#91A0AF"
-                                                    FontSize="11" />
-                                            </VerticalStackLayout>
-                                        </Grid>
-                                        <Button
-                                            Grid.ColumnSpan="2"
-                                            ZIndex="10"
-                                            Text=""
-                                            Padding="0"
-                                            BorderWidth="0"
-                                            BackgroundColor="Transparent"
-                                            CommandParameter="{Binding .}"
-                                            Pressed="OnTrackPressed"
-                                            Released="OnTrackReleased"
-                                            Clicked="OnTrackClicked"
-                                            SemanticProperties.Hint="Toca para reproducir o mantén pulsado para seleccionar" />
+                                                    Grid.Column="1"
+                                                    Text="{Binding Title}"
+                                                    TextColor="#F4F7FA"
+                                                    FontSize="14"
+                                                    FontFamily="OpenSansSemibold"
+                                                    LineBreakMode="TailTruncation"
+                                                    MaxLines="2" />
+                                            </Grid>
+                                            <Label
+                                                Text="{Binding SourceLabel}"
+                                                TextColor="#91A0AF"
+                                                FontSize="11" />
+                                        </VerticalStackLayout>
                                     </Grid>
-                                </Border>
-                            </ViewCell>
+                                    <Button
+                                        Grid.ColumnSpan="2"
+                                        ZIndex="10"
+                                        Text=""
+                                        Padding="0"
+                                        BorderWidth="0"
+                                        BackgroundColor="Transparent"
+                                        CommandParameter="{Binding .}"
+                                        Pressed="OnTrackPressed"
+                                        Released="OnTrackReleased"
+                                        Clicked="OnTrackClicked"
+                                        SemanticProperties.Hint="Toca para reproducir o mantén pulsado para seleccionar" />
+                                </Grid>
+                            </Border>
                         </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
 
                 <Border
                     x:Name="PlayerSection"
