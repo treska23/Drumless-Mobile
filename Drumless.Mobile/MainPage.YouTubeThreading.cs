@@ -61,8 +61,8 @@ public partial class MainPage
         _externalYouTubeMonitorSubscribed = true;
         ExternalYouTubePlaybackMonitor.PlaybackFinished += OnExternalYouTubePlaybackFinished;
 
-        // Keep this guard first in the event chain. It shuts down any external YouTube
-        // session before Drumless starts the newly requested local/embedded item.
+        // Keep this guard first in the event chain. It only shuts down an actually active
+        // external YouTube session before Drumless starts the newly requested item.
         _viewModel.PlaybackRequested -= OnPlaybackRequested;
         _viewModel.PlaybackRequested -= OnPlaybackRequestedWhileExternalYouTubeActive;
         _viewModel.PlaybackRequested += OnPlaybackRequestedWhileExternalYouTubeActive;
@@ -320,32 +320,29 @@ public partial class MainPage
 
     private void OnPlaybackRequestedWhileExternalYouTubeActive(object? sender, MediaItem item)
     {
-        // Always stop external YouTube first. This makes manual selection and automatic mixed
-        // transitions deterministic: only the newly requested Drumless item may keep playing.
-        if (_externalYouTubeActive)
+        // Do not touch MediaSession at all for ordinary local/embedded track changes. The previous
+        // version issued a global YouTube pause on every single PlaybackRequested event, which
+        // introduced an unnecessary native Android code path exactly when switching songs.
+        if (!_externalYouTubeActive)
         {
-            _externalYouTubeActive = false;
-            _externalYouTubeItemId = null;
-            ExternalYouTubePlaybackMonitor.StopTracking();
+            return;
         }
-        else
-        {
-            ExternalYouTubePlaybackMonitor.PauseYouTubePlayback();
-        }
+
+        _externalYouTubeActive = false;
+        _externalYouTubeItemId = null;
+        ExternalYouTubePlaybackMonitor.StopTracking();
     }
 
     private void OnStopRequestedWhileExternalYouTubeActive(object? sender, EventArgs e)
     {
         _externalYouTubeItemId = null;
-        if (_externalYouTubeActive)
+        if (!_externalYouTubeActive)
         {
-            _externalYouTubeActive = false;
-            ExternalYouTubePlaybackMonitor.StopTracking();
+            return;
         }
-        else
-        {
-            ExternalYouTubePlaybackMonitor.PauseYouTubePlayback();
-        }
+
+        _externalYouTubeActive = false;
+        ExternalYouTubePlaybackMonitor.StopTracking();
     }
 #endif
 }
