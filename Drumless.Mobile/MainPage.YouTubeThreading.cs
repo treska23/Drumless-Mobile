@@ -24,8 +24,6 @@ public partial class MainPage
             return;
         }
 
-        // The XAML-generated hookup points directly at OnYouTubeMessageReceived.
-        // Replace it with a wrapper that always continues on the MAUI main thread.
         YouTubePlayer.RawMessageReceived -= OnYouTubeMessageReceived;
         YouTubePlayer.RawMessageReceived -= OnYouTubeMessageReceivedOnMainThread;
         YouTubePlayer.RawMessageReceived += OnYouTubeMessageReceivedOnMainThread;
@@ -36,9 +34,9 @@ public partial class MainPage
             _externalYouTubeMonitorSubscribed = true;
             ExternalYouTubePlaybackMonitor.PlaybackFinished += OnExternalYouTubePlaybackFinished;
 
-            // These handlers must run BEFORE the normal playback handlers. Otherwise a new
-            // Drumless item can start while the previous video is still owning YouTube's
-            // MediaSession/audio focus.
+            // Always stop any official-YouTube playback BEFORE the normal Drumless playback
+            // handler starts the newly selected item. This prevents the UI saying one track
+            // while the previous external YouTube video keeps sounding.
             _viewModel.PlaybackRequested -= OnPlaybackRequested;
             _viewModel.PlaybackRequested -= OnPlaybackRequestedWhileExternalYouTubeActive;
             _viewModel.PlaybackRequested += OnPlaybackRequestedWhileExternalYouTubeActive;
@@ -95,8 +93,6 @@ public partial class MainPage
                 return false;
             }
 
-            // 101/150: embedding disabled by the owner. 5/153 also commonly work when
-            // delegated to the official YouTube app even though the iframe cannot play them.
             return code is 5 or 101 or 150 or 153;
         }
         catch (JsonException)
@@ -143,15 +139,20 @@ public partial class MainPage
     private async Task StartTrackedExternalYouTubeAsync(MediaItem item)
     {
         _pendingExternalYouTubeItem = null;
+
+        // Kill any previous external YouTube playback first. Otherwise ACTION_VIEW can reuse
+        // YouTube's existing session and leave the old video audible while Drumless already
+        // considers the newly selected item current.
+        ExternalYouTubePlaybackMonitor.PauseYouTubePlayback();
+        await Task.Delay(150);
+
         _externalYouTubeActive = true;
-
-        // Launch the requested video first. Starting the monitor before ACTION_VIEW can attach
-        // to stale metadata from the previously playing YouTube video.
         await OpenInYouTubeAsync(item);
-        ExternalYouTubePlaybackMonitor.BeginTracking();
 
-        // OpenInYouTubeAsync marks the internal player as paused. From Drumless' point
-        // of view the current playlist item is nevertheless playing in the YouTube app.
+        // Let YouTube replace the old MediaSession metadata with the requested video, then
+        // establish the tracking baseline. The watchdog will take over from here.
+        await Task.Delay(500);
+        ExternalYouTubePlaybackMonitor.BeginTracking();
         _viewModel.ReportPlaybackState(true);
     }
 
@@ -173,9 +174,8 @@ public partial class MainPage
             return;
         }
 
-        // Stop/pause the official YouTube session first so its own autoplay cannot
-        // compete with the next item selected by Drumless.
-        ExternalYouTubePlaybackMonitor.StopTracking();
+        // NotifyFinished has already paused YouTube. Mark the external item inactive BEFORE
+        // Next() so the following PlaybackRequested event cannot be mistaken for the old item.
         _externalYouTubeActive = false;
         _viewModel.ReportPlaybackState(false);
         _viewModel.Next(automatic: true);
@@ -183,26 +183,31 @@ public partial class MainPage
 
     private void OnPlaybackRequestedWhileExternalYouTubeActive(object? sender, MediaItem item)
     {
-        if (!_externalYouTubeActive)
+        // This handler is deliberately first. Even if our boolean got out of sync, always make
+        // a best-effort PAUSE against the official YouTube MediaSession before Drumless starts
+        // any new local or embedded track.
+        if (_externalYouTubeActive)
         {
-            return;
+            _externalYouTubeActive = false;
+            ExternalYouTubePlaybackMonitor.StopTracking();
         }
-
-        // This handler is deliberately first in the PlaybackRequested invocation list.
-        // Pause YouTube before Drumless starts the newly selected local/embedded item.
-        _externalYouTubeActive = false;
-        ExternalYouTubePlaybackMonitor.StopTracking();
+        else
+        {
+            ExternalYouTubePlaybackMonitor.PauseYouTubePlayback();
+        }
     }
 
     private void OnStopRequestedWhileExternalYouTubeActive(object? sender, EventArgs e)
     {
-        if (!_externalYouTubeActive)
+        if (_externalYouTubeActive)
         {
-            return;
+            _externalYouTubeActive = false;
+            ExternalYouTubePlaybackMonitor.StopTracking();
         }
-
-        _externalYouTubeActive = false;
-        ExternalYouTubePlaybackMonitor.StopTracking();
+        else
+        {
+            ExternalYouTubePlaybackMonitor.PauseYouTubePlayback();
+        }
     }
 #endif
 }
