@@ -19,11 +19,10 @@ public partial class MainPage
         // only when the first YouTube item is actually requested. This keeps normal app startup
         // on the same stable path as before the internal-browser experiment.
 
-        // Replace only the playback-routing handlers. The existing HybridWebView remains alive
-        // as an internal helper for playlist inspection, but actual YouTube tracks now play in
-        // the full mobile YouTube site hosted by Drumless' own WebView.
+        // Actual YouTube tracks now play in the full mobile YouTube site hosted by Drumless' own
+        // WebView. Remove the original playback handlers so no legacy iframe/external-app route can
+        // compete with the browser route.
         _viewModel.PlaybackRequested -= OnPlaybackRequested;
-        _viewModel.PlaybackRequested -= OnPlaybackRequestedWhileExternalYouTubeActive;
         _viewModel.PlaybackRequested -= OnYouTubeBrowserPlaybackRequested;
         _viewModel.PlaybackRequested += OnYouTubeBrowserPlaybackRequested;
 
@@ -32,7 +31,6 @@ public partial class MainPage
         _viewModel.PlaybackToggleRequested += OnYouTubeBrowserPlaybackToggleRequested;
 
         _viewModel.StopPlaybackRequested -= OnStopPlaybackRequested;
-        _viewModel.StopPlaybackRequested -= OnStopRequestedWhileExternalYouTubeActive;
         _viewModel.StopPlaybackRequested -= OnYouTubeBrowserStopRequested;
         _viewModel.StopPlaybackRequested += OnYouTubeBrowserStopRequested;
         _viewModel.StopPlaybackRequested += OnStopPlaybackRequested;
@@ -122,13 +120,6 @@ public partial class MainPage
                 SendYouTubeCommand(new { type = "pause" });
                 _pendingYouTubeVideoId = null;
 
-                if (_externalYouTubeActive)
-                {
-                    _externalYouTubeActive = false;
-                    _externalYouTubeItemId = null;
-                    ExternalYouTubePlaybackMonitor.StopTracking();
-                }
-
                 await PlayYouTubeInBrowserAsync(item);
                 return;
             }
@@ -200,17 +191,13 @@ public partial class MainPage
 
         try
         {
-            // A track selection is a user gesture in Drumless. Android's WebView autoplay setting
-            // is also relaxed in MauiProgram, so try to start the HTML5 player once YouTube has
-            // finished its SPA navigation. If YouTube requires account interaction, the page stays
-            // fully visible and the user can sign in or press play directly.
             await Task.Delay(500);
             await _youTubeBrowser.EvaluateJavaScriptAsync(
                 "(() => { const v=document.querySelector('video'); if(v){ v.play().catch(()=>{}); } return true; })()");
         }
         catch (Exception)
         {
-            // The monitor will keep waiting for the video element while the page/login flow loads.
+            // The monitor keeps waiting while the page or sign-in flow loads.
         }
     }
 
