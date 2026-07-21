@@ -1,5 +1,8 @@
 using System.Text.Json;
 using Drumless.Mobile.Core.Models;
+#if ANDROID
+using Android.Content;
+#endif
 
 namespace Drumless.Mobile;
 
@@ -7,6 +10,7 @@ public partial class MainPage
 {
     private bool _externalYouTubeMonitorSubscribed;
     private bool _externalYouTubeActive;
+    private string? _externalYouTubeItemId;
     private MediaItem? _pendingExternalYouTubeItem;
 
     /// <summary>
@@ -34,9 +38,8 @@ public partial class MainPage
             _externalYouTubeMonitorSubscribed = true;
             ExternalYouTubePlaybackMonitor.PlaybackFinished += OnExternalYouTubePlaybackFinished;
 
-            // Always stop any official-YouTube playback BEFORE the normal Drumless playback
-            // handler starts the newly selected item. This prevents the UI saying one track
-            // while the previous external YouTube video keeps sounding.
+            // Keep this guard first in the event chain. It shuts down any external YouTube
+            // session before Drumless starts the newly requested local/embedded item.
             _viewModel.PlaybackRequested -= OnPlaybackRequested;
             _viewModel.PlaybackRequested -= OnPlaybackRequestedWhileExternalYouTubeActive;
             _viewModel.PlaybackRequested += OnPlaybackRequestedWhileExternalYouTubeActive;
@@ -62,8 +65,18 @@ public partial class MainPage
         }
 
 #if ANDROID
-        if (TryGetExternalFallbackError(e.Message, out var code))
+        if (TryGetExternalFallbackError(e.Message, out var code, out var videoId))
         {
+            // Ignore a late error emitted by the iframe for a video that is no longer current.
+            // Without this guard an old failed video could reopen YouTube after the user had
+            // already moved to another track.
+            var currentVideoId = _viewModel.CurrentItem?.Model.YouTubeVideoId;
+            if (!string.IsNullOrWhiteSpace(videoId) &&
+                !string.Equals(videoId, currentVideoId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
             _ = HandleExternalYouTubeFallbackAsync(code);
             return;
         }
@@ -73,9 +86,13 @@ public partial class MainPage
     }
 
 #if ANDROID
-    private static bool TryGetExternalFallbackError(string? message, out int code)
+    private static bool TryGetExternalFallbackError(
+        string? message,
+        out int code,
+        out string? videoId)
     {
         code = 0;
+        videoId = null;
         if (string.IsNullOrWhiteSpace(message))
         {
             return false;
@@ -91,6 +108,12 @@ public partial class MainPage
                 !codeElement.TryGetInt32(out code))
             {
                 return false;
+            }
+
+            if (root.TryGetProperty("videoId", out var videoElement) &&
+                videoElement.ValueKind == JsonValueKind.String)
+            {
+                videoId = videoElement.GetString();
             }
 
             return code is 5 or 101 or 150 or 153;
@@ -112,6 +135,7 @@ public partial class MainPage
 
         _pendingYouTubeVideoId = null;
         _youtubeIsPlaying = false;
+        SendYouTubeCommand(new { type = "pause" });
 
         if (!ExternalYouTubePlaybackMonitor.HasNotificationAccess)
         {
@@ -129,7 +153,7 @@ public partial class MainPage
             }
 
             _pendingExternalYouTubeItem = null;
-            await OpenInYouTubeAsync(item);
+            await OpenOfficialYouTubeAsync(item);
             return;
         }
 
@@ -140,20 +164,71 @@ public partial class MainPage
     {
         _pendingExternalYouTubeItem = null;
 
-        // Kill any previous external YouTube playback first. Otherwise ACTION_VIEW can reuse
-        // YouTube's existing session and leave the old video audible while Drumless already
-        // considers the newly selected item current.
+        // Stop the previous official-YouTube session before opening the exact requested video.
+        // This prevents YouTube from carrying on with its own playlist while Drumless already
+        // considers a different item current.
         ExternalYouTubePlaybackMonitor.PauseYouTubePlayback();
-        await Task.Delay(150);
+        await Task.Delay(250);
 
         _externalYouTubeActive = true;
-        await OpenInYouTubeAsync(item);
+        _externalYouTubeItemId = item.Id;
 
-        // Let YouTube replace the old MediaSession metadata with the requested video, then
-        // establish the tracking baseline. The watchdog will take over from here.
-        await Task.Delay(500);
+        if (!await OpenOfficialYouTubeAsync(item))
+        {
+            _externalYouTubeActive = false;
+            _externalYouTubeItemId = null;
+            _viewModel.ReportPlaybackFailure("No se pudo abrir la pista en la aplicación de YouTube");
+            return;
+        }
+
+        // Give the official app enough time to replace any previous MediaSession metadata with
+        // the exact requested video before taking the tracking baseline. Starting the monitor
+        // too early made the old video look like the current Drumless item and caused bad jumps.
+        await Task.Delay(1200);
+
+        // The user may have changed track while YouTube was opening.
+        if (!_externalYouTubeActive ||
+            !string.Equals(_externalYouTubeItemId, item.Id, StringComparison.Ordinal) ||
+            !string.Equals(_viewModel.CurrentItem?.Id, item.Id, StringComparison.Ordinal))
+        {
+            ExternalYouTubePlaybackMonitor.PauseYouTubePlayback();
+            return;
+        }
+
         ExternalYouTubePlaybackMonitor.BeginTracking();
         _viewModel.ReportPlaybackState(true);
+    }
+
+    private async Task<bool> OpenOfficialYouTubeAsync(MediaItem item)
+    {
+        if (string.IsNullOrWhiteSpace(item.YouTubeVideoId))
+        {
+            return false;
+        }
+
+        SendYouTubeCommand(new { type = "pause" });
+        _pendingYouTubeVideoId = null;
+        _youtubeIsPlaying = false;
+        _viewModel.ReportPlaybackState(false);
+
+        var exactVideoUrl = $"https://www.youtube.com/watch?v={Uri.EscapeDataString(item.YouTubeVideoId)}";
+        try
+        {
+            var context = Android.App.Application.Context;
+            var intent = new Intent(Intent.ActionView, Android.Net.Uri.Parse(exactVideoUrl));
+            intent.SetPackage(YouTubeMediaSessionListener.YouTubePackageName);
+            intent.AddFlags(ActivityFlags.NewTask);
+            context.StartActivity(intent);
+            return true;
+        }
+        catch (ActivityNotFoundException)
+        {
+            return await Launcher.Default.OpenAsync(exactVideoUrl);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     public async void ResumePendingExternalYouTubeAsync()
@@ -174,21 +249,32 @@ public partial class MainPage
             return;
         }
 
-        // NotifyFinished has already paused YouTube. Mark the external item inactive BEFORE
-        // Next() so the following PlaybackRequested event cannot be mistaken for the old item.
+        var finishedItemId = _externalYouTubeItemId;
         _externalYouTubeActive = false;
+        _externalYouTubeItemId = null;
+
+        // A late MediaSession callback must never advance a newer manually selected track.
+        if (string.IsNullOrWhiteSpace(finishedItemId) ||
+            !string.Equals(_viewModel.CurrentItem?.Id, finishedItemId, StringComparison.Ordinal))
+        {
+            ExternalYouTubePlaybackMonitor.PauseYouTubePlayback();
+            return;
+        }
+
+        // NotifyFinished has already paused YouTube. From this point Drumless owns sequencing
+        // again, so Next() can hand off to local audio, embedded YouTube, or another fallback.
         _viewModel.ReportPlaybackState(false);
         _viewModel.Next(automatic: true);
     }
 
     private void OnPlaybackRequestedWhileExternalYouTubeActive(object? sender, MediaItem item)
     {
-        // This handler is deliberately first. Even if our boolean got out of sync, always make
-        // a best-effort PAUSE against the official YouTube MediaSession before Drumless starts
-        // any new local or embedded track.
+        // Always stop external YouTube first. This makes manual selection and automatic mixed
+        // transitions deterministic: only the newly requested Drumless item may keep playing.
         if (_externalYouTubeActive)
         {
             _externalYouTubeActive = false;
+            _externalYouTubeItemId = null;
             ExternalYouTubePlaybackMonitor.StopTracking();
         }
         else
@@ -199,6 +285,7 @@ public partial class MainPage
 
     private void OnStopRequestedWhileExternalYouTubeActive(object? sender, EventArgs e)
     {
+        _externalYouTubeItemId = null;
         if (_externalYouTubeActive)
         {
             _externalYouTubeActive = false;
