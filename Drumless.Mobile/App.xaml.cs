@@ -12,9 +12,9 @@ public partial class App : Application
 
     protected override Window CreateWindow(IActivationState? activationState)
     {
-        // Playback must not be tied to the visual window lifecycle. Local tracks are
-        // kept alive by the Android foreground playback service and external YouTube
-        // playback is handled by the official YouTube app when needed.
+        // Do not pause playback merely because the window loses focus. External fallback
+        // videos are handled by the official YouTube app, while local playback currently
+        // remains owned by Drumless' in-process audio player.
         var window = new Window(_mainPage);
 #if ANDROID
         window.Resumed += (_, _) => _mainPage.ResumePendingExternalYouTubeAsync();
