@@ -17,10 +17,6 @@ public sealed class PlaybackKeepAliveService : Service
     {
         base.OnCreate();
         EnsureNotificationChannel();
-
-        // Android gives a service launched through StartForegroundService only a few
-        // seconds to promote itself. Do it immediately, and explicitly provide the
-        // mediaPlayback type on API 29+ so Android 14+ can validate the declaration.
         PromoteToForeground();
     }
 
@@ -29,31 +25,54 @@ public sealed class PlaybackKeepAliveService : Service
         StartCommandFlags flags,
         int startId)
     {
-        // Re-promoting is harmless and also covers restarts of a sticky service.
         PromoteToForeground();
-        return StartCommandResult.Sticky;
+
+        // Never ask Android to resurrect this service after the app/process has been killed.
+        // A sticky restart can create a crash/restart loop if Android no longer allows a
+        // foreground-service promotion in the new background state.
+        return StartCommandResult.NotSticky;
     }
 
     public override IBinder? OnBind(Intent? intent) => null;
 
-    public static void Start()
+    public static bool TryStart()
     {
-        var context = Android.App.Application.Context;
-        var intent = new Intent(context, typeof(PlaybackKeepAliveService));
-        if (Build.VERSION.SdkInt >= BuildVersionCodes.O)
+        try
         {
-            context.StartForegroundService(intent);
+            var context = Android.App.Application.Context;
+            var intent = new Intent(context, typeof(PlaybackKeepAliveService));
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.O)
+            {
+                context.StartForegroundService(intent);
+            }
+            else
+            {
+                context.StartService(intent);
+            }
+
+            return true;
         }
-        else
+        catch (Exception)
         {
-            context.StartService(intent);
+            // Playback should degrade gracefully instead of taking down the app if Android
+            // refuses a foreground-service start in the current lifecycle state.
+            return false;
         }
     }
 
+    public static void Start() => TryStart();
+
     public static void Stop()
     {
-        var context = Android.App.Application.Context;
-        context.StopService(new Intent(context, typeof(PlaybackKeepAliveService)));
+        try
+        {
+            var context = Android.App.Application.Context;
+            context.StopService(new Intent(context, typeof(PlaybackKeepAliveService)));
+        }
+        catch (Exception)
+        {
+            // The service may already be gone with the process.
+        }
     }
 
     private void PromoteToForeground()
