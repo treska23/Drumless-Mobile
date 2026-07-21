@@ -6,22 +6,21 @@ namespace Drumless.Mobile;
 
 public partial class MainPage
 {
+    private const double YouTubeBrowserCollapsedHeight = 190d;
+
     private WebView? _youTubeBrowser;
     private Grid? _youTubeBrowserOverlay;
+    private Button? _youTubeBrowserExpandButton;
     private CancellationTokenSource? _youTubeBrowserMonitorCancellation;
     private string? _youTubeBrowserItemId;
     private bool _youTubeBrowserHasPlayed;
     private bool _youTubeBrowserTransitioning;
+    private bool _youTubeBrowserExpanded;
 
     private void EnableYouTubeBrowserPlaybackIntegration()
     {
-        // Do not construct Android WebView during MainPage startup. The browser is created lazily
-        // only when the first YouTube item is actually requested. This keeps normal app startup
-        // on the same stable path as before the internal-browser experiment.
-
-        // Actual YouTube tracks now play in the full mobile YouTube site hosted by Drumless' own
-        // WebView. Remove the original playback handlers so no legacy iframe/external-app route can
-        // compete with the browser route.
+        // Actual YouTube tracks play only in the full mobile YouTube site hosted by Drumless'
+        // own WebView. The legacy iframe handler remains available only for playlist inspection.
         _viewModel.PlaybackRequested -= OnPlaybackRequested;
         _viewModel.PlaybackRequested -= OnYouTubeBrowserPlaybackRequested;
         _viewModel.PlaybackRequested += OnYouTubeBrowserPlaybackRequested;
@@ -53,29 +52,23 @@ public partial class MainPage
 
         var title = new Label
         {
-            Text = "YouTube · inicia sesión aquí para usar tu cuenta",
+            Text = "YouTube · toca aquí para ampliar",
             TextColor = Color.FromArgb("#F4F7FA"),
             FontSize = 12,
             VerticalTextAlignment = TextAlignment.Center,
             LineBreakMode = LineBreakMode.TailTruncation
         };
 
-        var listButton = new Button
+        var expandButton = new Button
         {
-            Text = "Ver lista",
+            Text = "Ampliar",
             BackgroundColor = Color.FromArgb("#1A222C"),
             TextColor = Color.FromArgb("#F4F7FA"),
             CornerRadius = 10,
             Padding = new Thickness(12, 6),
             FontSize = 12
         };
-        listButton.Clicked += (_, _) =>
-        {
-            if (_youTubeBrowserOverlay is not null)
-            {
-                _youTubeBrowserOverlay.IsVisible = false;
-            }
-        };
+        expandButton.Clicked += (_, _) => ToggleYouTubeBrowserSize();
 
         var header = new Grid
         {
@@ -88,13 +81,19 @@ public partial class MainPage
             }
         };
         header.Add(title);
-        header.Add(listButton, 1);
+        header.Add(expandButton, 1);
+        var tapHeader = new TapGestureRecognizer();
+        tapHeader.Tapped += (_, _) => ToggleYouTubeBrowserSize();
+        header.GestureRecognizers.Add(tapHeader);
 
         var overlay = new Grid
         {
             IsVisible = false,
             ZIndex = 1000,
             BackgroundColor = Colors.Black,
+            HeightRequest = YouTubeBrowserCollapsedHeight,
+            VerticalOptions = LayoutOptions.End,
+            Margin = new Thickness(8),
             RowDefinitions =
             {
                 new RowDefinition(GridLength.Auto),
@@ -105,9 +104,42 @@ public partial class MainPage
         overlay.Add(browser, 0, 1);
         Grid.SetRow(overlay, 1);
 
+        // The compact browser floats at the bottom. The playlist remains visible and usable behind
+        // it; the user can explicitly expand the browser only when account/page interaction is needed.
         root.Children.Add(overlay);
         _youTubeBrowser = browser;
         _youTubeBrowserOverlay = overlay;
+        _youTubeBrowserExpandButton = expandButton;
+    }
+
+    private void ToggleYouTubeBrowserSize()
+    {
+        if (_youTubeBrowserOverlay is null)
+        {
+            return;
+        }
+
+        _youTubeBrowserExpanded = !_youTubeBrowserExpanded;
+        if (_youTubeBrowserExpanded)
+        {
+            _youTubeBrowserOverlay.HeightRequest = -1;
+            _youTubeBrowserOverlay.VerticalOptions = LayoutOptions.Fill;
+            _youTubeBrowserOverlay.Margin = new Thickness(0);
+            if (_youTubeBrowserExpandButton is not null)
+            {
+                _youTubeBrowserExpandButton.Text = "Minimizar";
+            }
+        }
+        else
+        {
+            _youTubeBrowserOverlay.HeightRequest = YouTubeBrowserCollapsedHeight;
+            _youTubeBrowserOverlay.VerticalOptions = LayoutOptions.End;
+            _youTubeBrowserOverlay.Margin = new Thickness(8);
+            if (_youTubeBrowserExpandButton is not null)
+            {
+                _youTubeBrowserExpandButton.Text = "Ampliar";
+            }
+        }
     }
 
     private async void OnYouTubeBrowserPlaybackRequested(object? sender, MediaItem item)
@@ -117,9 +149,7 @@ public partial class MainPage
             if (item.Kind == MediaKind.YouTube)
             {
                 _audio.Stop();
-                SendYouTubeCommand(new { type = "pause" });
                 _pendingYouTubeVideoId = null;
-
                 await PlayYouTubeInBrowserAsync(item);
                 return;
             }
@@ -171,6 +201,16 @@ public partial class MainPage
         _youtubePositionSeconds = 0;
         _youtubeIsPlaying = false;
 
+        // Always start compact. The track list must remain on screen during normal playback.
+        _youTubeBrowserExpanded = false;
+        _youTubeBrowserOverlay.HeightRequest = YouTubeBrowserCollapsedHeight;
+        _youTubeBrowserOverlay.VerticalOptions = LayoutOptions.End;
+        _youTubeBrowserOverlay.Margin = new Thickness(8);
+        if (_youTubeBrowserExpandButton is not null)
+        {
+            _youTubeBrowserExpandButton.Text = "Ampliar";
+        }
+
         _youTubeBrowserOverlay.IsVisible = true;
         var url = $"https://m.youtube.com/watch?v={Uri.EscapeDataString(item.YouTubeVideoId)}";
         _youTubeBrowser.Source = url;
@@ -191,13 +231,40 @@ public partial class MainPage
 
         try
         {
-            await Task.Delay(500);
-            await _youTubeBrowser.EvaluateJavaScriptAsync(
-                "(() => { const v=document.querySelector('video'); if(v){ v.play().catch(()=>{}); } return true; })()");
+            await EnsureYouTubeBrowserAudibleAndPlayingAsync();
         }
         catch (Exception)
         {
             // The monitor keeps waiting while the page or sign-in flow loads.
+        }
+    }
+
+    private async Task EnsureYouTubeBrowserAudibleAndPlayingAsync()
+    {
+        if (_youTubeBrowser is null)
+        {
+            return;
+        }
+
+        // YouTube mobile can initially autoplay muted. Retry briefly because its SPA creates the
+        // <video> element after the first navigation event. Playback stays in the visible WebView;
+        // Drumless simply asks that element to use normal volume and continue playing.
+        for (var attempt = 0; attempt < 12; attempt++)
+        {
+            await Task.Delay(attempt == 0 ? 350 : 250);
+            if (_youTubeBrowser is null)
+            {
+                return;
+            }
+
+            var result = await MainThread.InvokeOnMainThreadAsync(() =>
+                _youTubeBrowser.EvaluateJavaScriptAsync(
+                    "(() => { const v=document.querySelector('video'); if(!v) return 'NOV'; const b=document.querySelector('.ytp-mute-button'); if(v.muted && b){try{b.click();}catch(e){}} v.removeAttribute('muted'); v.defaultMuted=false; v.muted=false; v.volume=1; const p=v.play(); if(p&&p.catch){p.catch(()=>{});} return (v.muted?'M':'U')+'|'+String(v.volume)+'|'+(v.paused?'P':'Y'); })()"));
+            var state = NormalizeJavaScriptString(result);
+            if (!string.IsNullOrWhiteSpace(state) && !state.StartsWith("NOV", StringComparison.Ordinal))
+            {
+                return;
+            }
         }
     }
 
@@ -209,7 +276,7 @@ public partial class MainPage
         }
 
         await _youTubeBrowser.EvaluateJavaScriptAsync(
-            "(() => { const v=document.querySelector('video'); if(!v) return false; if(v.paused){v.play().catch(()=>{});}else{v.pause();} return true; })()");
+            "(() => { const v=document.querySelector('video'); if(!v) return false; v.removeAttribute('muted'); v.defaultMuted=false; v.muted=false; v.volume=1; if(v.paused){const p=v.play();if(p&&p.catch)p.catch(()=>{});}else{v.pause();} return true; })()");
     }
 
     private async Task StopYouTubeBrowserAsync(bool hide)
@@ -261,7 +328,9 @@ public partial class MainPage
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await Task.Delay(300, cancellationToken);
+                // Polling too aggressively creates unnecessary Chromium/main-thread pressure. A
+                // 750 ms cadence is enough to stop YouTube before its own autoplay takes over.
+                await Task.Delay(750, cancellationToken);
                 if (_youTubeBrowser is null ||
                     !string.Equals(_youTubeBrowserItemId, itemId, StringComparison.Ordinal) ||
                     !string.Equals(_viewModel.CurrentItem?.Id, itemId, StringComparison.Ordinal))
@@ -271,18 +340,18 @@ public partial class MainPage
 
                 var raw = await MainThread.InvokeOnMainThreadAsync(() =>
                     _youTubeBrowser.EvaluateJavaScriptAsync(
-                        "(() => { const v=document.querySelector('video'); const h=location.href; if(!v) return 'NOV|'+h; return [v.ended?'1':'0',v.paused?'1':'0',Number(v.currentTime||0).toFixed(3),Number(v.duration||0).toFixed(3),h].join('|'); })()"));
+                        "(() => { const v=document.querySelector('video'); const h=location.href; if(!v) return 'NOV|'+h; return [v.ended?'1':'0',v.paused?'1':'0',v.muted?'1':'0',Number(v.currentTime||0).toFixed(3),Number(v.duration||0).toFixed(3),h].join('|'); })()"));
                 var state = NormalizeJavaScriptString(raw);
                 if (string.IsNullOrWhiteSpace(state) || state.StartsWith("NOV|", StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                var parts = state.Split('|', 5);
-                if (parts.Length < 5 ||
-                    !double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out var position) ||
+                var parts = state.Split('|', 6);
+                if (parts.Length < 6 ||
                     !double.TryParse(parts[3], System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var position) ||
+                    !double.TryParse(parts[4], System.Globalization.NumberStyles.Float,
                         System.Globalization.CultureInfo.InvariantCulture, out var duration))
                 {
                     continue;
@@ -290,11 +359,26 @@ public partial class MainPage
 
                 var ended = parts[0] == "1";
                 var paused = parts[1] == "1";
-                var href = parts[4];
+                var muted = parts[2] == "1";
+                var href = parts[5];
 
                 _youtubePositionSeconds = Math.Max(0d, position);
                 _youtubePositionReceivedTimestamp = Stopwatch.GetTimestamp();
                 _youtubeIsPlaying = !paused;
+
+                if (muted)
+                {
+                    try
+                    {
+                        await MainThread.InvokeOnMainThreadAsync(() =>
+                            _youTubeBrowser.EvaluateJavaScriptAsync(
+                                "(() => { const v=document.querySelector('video'); if(v){v.removeAttribute('muted');v.defaultMuted=false;v.muted=false;v.volume=1;} return true; })()"));
+                    }
+                    catch (Exception)
+                    {
+                        // Keep playback monitoring even if YouTube temporarily replaces the element.
+                    }
+                }
 
                 if (!paused && position > 0.05d)
                 {
@@ -305,7 +389,7 @@ public partial class MainPage
                 var urlChangedToAnotherVideo =
                     TryGetVideoIdFromYouTubeUrl(href, out var currentVideoId) &&
                     !string.Equals(currentVideoId, expectedVideoId, StringComparison.Ordinal);
-                var reachedEnd = duration > 0d && position >= duration - 0.65d;
+                var reachedEnd = duration > 0d && position >= duration - 0.9d;
 
                 if (!_youTubeBrowserHasPlayed || _youTubeBrowserTransitioning ||
                     (!ended && !reachedEnd && !urlChangedToAnotherVideo))
@@ -318,6 +402,8 @@ public partial class MainPage
                 {
                     try
                     {
+                        // Drumless owns playlist sequencing. Stop the YouTube page first so its own
+                        // autoplay cannot continue, then advance using Sequential/Shuffle/Single.
                         if (_youTubeBrowser is not null)
                         {
                             await _youTubeBrowser.EvaluateJavaScriptAsync(
