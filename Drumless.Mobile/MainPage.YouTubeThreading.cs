@@ -26,6 +26,15 @@ public partial class MainPage
         // EnableYouTubeBrowserPlaybackIntegration removes every relevant handler before re-adding
         // the browser route.
         RewireYouTubeMessageHandler();
+
+        // The old iframe player must never be visible or become the active playback surface again.
+        // Keep the control alive only because the playlist importer still uses its JS bridge.
+        _pendingYouTubeVideoId = null;
+        YouTubePlayer.IsVisible = false;
+        YouTubePlayer.InputTransparent = true;
+        YouTubePlayer.Opacity = 0;
+        SendYouTubeCommand(new { type = "pause" });
+
         EnableYouTubeBrowserPlaybackIntegration();
     }
 
