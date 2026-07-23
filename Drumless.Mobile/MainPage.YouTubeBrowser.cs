@@ -16,6 +16,7 @@ public partial class MainPage
     private bool _youTubeBrowserHasPlayed;
     private bool _youTubeBrowserTransitioning;
     private bool _youTubeBrowserExpanded;
+    private bool? _youTubeBrowserReportedPlaying;
 
     private void EnableYouTubeBrowserPlaybackIntegration()
     {
@@ -198,6 +199,7 @@ public partial class MainPage
         _youTubeBrowserItemId = item.Id;
         _youTubeBrowserHasPlayed = false;
         _youTubeBrowserTransitioning = false;
+        _youTubeBrowserReportedPlaying = null;
         _youtubePositionSeconds = 0;
         _youtubeIsPlaying = false;
 
@@ -246,12 +248,13 @@ public partial class MainPage
             return;
         }
 
-        // YouTube mobile can initially autoplay muted. Retry briefly because its SPA creates the
-        // <video> element after the first navigation event. Playback stays in the visible WebView;
-        // Drumless simply asks that element to use normal volume and continue playing.
-        for (var attempt = 0; attempt < 12; attempt++)
+        // Keep this light: EvaluateJavaScriptAsync executes through the WebView/UI thread. A few
+        // spaced attempts are enough for YouTube's SPA to create the <video> element without
+        // hammering Chromium during the first seconds of playback.
+        var delays = new[] { 500, 1000, 1500 };
+        foreach (var delay in delays)
         {
-            await Task.Delay(attempt == 0 ? 350 : 250);
+            await Task.Delay(delay);
             if (_youTubeBrowser is null)
             {
                 return;
@@ -259,9 +262,9 @@ public partial class MainPage
 
             var result = await MainThread.InvokeOnMainThreadAsync(() =>
                 _youTubeBrowser.EvaluateJavaScriptAsync(
-                    "(() => { const v=document.querySelector('video'); if(!v) return 'NOV'; const b=document.querySelector('.ytp-mute-button'); if(v.muted && b){try{b.click();}catch(e){}} v.removeAttribute('muted'); v.defaultMuted=false; v.muted=false; v.volume=1; const p=v.play(); if(p&&p.catch){p.catch(()=>{});} return (v.muted?'M':'U')+'|'+String(v.volume)+'|'+(v.paused?'P':'Y'); })()"));
+                    "(() => { const v=document.querySelector('video'); if(!v) return 'NOV'; const b=document.querySelector('.ytp-mute-button'); if(v.muted && b){try{b.click();}catch(e){}} v.removeAttribute('muted'); v.defaultMuted=false; v.muted=false; v.volume=1; const p=v.play(); if(p&&p.catch){p.catch(()=>{});} return 'OK'; })()"));
             var state = NormalizeJavaScriptString(result);
-            if (!string.IsNullOrWhiteSpace(state) && !state.StartsWith("NOV", StringComparison.Ordinal))
+            if (string.Equals(state, "OK", StringComparison.Ordinal))
             {
                 return;
             }
@@ -285,6 +288,7 @@ public partial class MainPage
         _youTubeBrowserItemId = null;
         _youTubeBrowserHasPlayed = false;
         _youTubeBrowserTransitioning = false;
+        _youTubeBrowserReportedPlaying = null;
         _youtubeIsPlaying = false;
 
         if (_youTubeBrowser is not null)
@@ -324,13 +328,13 @@ public partial class MainPage
         string expectedVideoId,
         CancellationToken cancellationToken)
     {
+        var nextPollDelay = 2000;
+
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                // Polling too aggressively creates unnecessary Chromium/main-thread pressure. A
-                // 750 ms cadence is enough to stop YouTube before its own autoplay takes over.
-                await Task.Delay(750, cancellationToken);
+                await Task.Delay(nextPollDelay, cancellationToken);
                 if (_youTubeBrowser is null ||
                     !string.Equals(_youTubeBrowserItemId, itemId, StringComparison.Ordinal) ||
                     !string.Equals(_viewModel.CurrentItem?.Id, itemId, StringComparison.Ordinal))
@@ -338,92 +342,108 @@ public partial class MainPage
                     return;
                 }
 
+                // Android WebView requires evaluateJavascript on the UI thread. Keep these calls
+                // infrequent during normal playback, then tighten the cadence only near the end.
                 var raw = await MainThread.InvokeOnMainThreadAsync(() =>
                     _youTubeBrowser.EvaluateJavaScriptAsync(
-                        "(() => { const v=document.querySelector('video'); const h=location.href; if(!v) return 'NOV|'+h; return [v.ended?'1':'0',v.paused?'1':'0',v.muted?'1':'0',Number(v.currentTime||0).toFixed(3),Number(v.duration||0).toFixed(3),h].join('|'); })()"));
+                        "(() => { const v=document.querySelector('video'); const h=location.href; if(!v) return 'NOV|'+h; return [v.ended?'1':'0',v.paused?'1':'0',Number(v.currentTime||0).toFixed(3),Number(v.duration||0).toFixed(3),h].join('|'); })()"));
                 var state = NormalizeJavaScriptString(raw);
                 if (string.IsNullOrWhiteSpace(state) || state.StartsWith("NOV|", StringComparison.Ordinal))
                 {
+                    nextPollDelay = 2000;
                     continue;
                 }
 
-                var parts = state.Split('|', 6);
-                if (parts.Length < 6 ||
-                    !double.TryParse(parts[3], System.Globalization.NumberStyles.Float,
+                var parts = state.Split('|', 5);
+                if (parts.Length < 5 ||
+                    !double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
                         System.Globalization.CultureInfo.InvariantCulture, out var position) ||
-                    !double.TryParse(parts[4], System.Globalization.NumberStyles.Float,
+                    !double.TryParse(parts[3], System.Globalization.NumberStyles.Float,
                         System.Globalization.CultureInfo.InvariantCulture, out var duration))
                 {
+                    nextPollDelay = 2000;
                     continue;
                 }
 
                 var ended = parts[0] == "1";
                 var paused = parts[1] == "1";
-                var muted = parts[2] == "1";
-                var href = parts[5];
+                var href = parts[4];
+                var observedPlaying = !paused;
 
                 _youtubePositionSeconds = Math.Max(0d, position);
                 _youtubePositionReceivedTimestamp = Stopwatch.GetTimestamp();
-                _youtubeIsPlaying = !paused;
+                _youtubeIsPlaying = observedPlaying;
 
-                if (muted)
-                {
-                    try
-                    {
-                        await MainThread.InvokeOnMainThreadAsync(() =>
-                            _youTubeBrowser.EvaluateJavaScriptAsync(
-                                "(() => { const v=document.querySelector('video'); if(v){v.removeAttribute('muted');v.defaultMuted=false;v.muted=false;v.volume=1;} return true; })()"));
-                    }
-                    catch (Exception)
-                    {
-                        // Keep playback monitoring even if YouTube temporarily replaces the element.
-                    }
-                }
-
-                if (!paused && position > 0.05d)
+                if (observedPlaying && position > 0.05d)
                 {
                     _youTubeBrowserHasPlayed = true;
-                    _viewModel.ReportPlaybackState(true);
+                }
+
+                // Do not rewrite StatusMessage and bound UI state on every poll. That periodic UI
+                // invalidation was unnecessary work while Chromium was decoding and playing audio.
+                if (_youTubeBrowserReportedPlaying != observedPlaying)
+                {
+                    _youTubeBrowserReportedPlaying = observedPlaying;
+                    _viewModel.ReportPlaybackState(observedPlaying);
                 }
 
                 var urlChangedToAnotherVideo =
                     TryGetVideoIdFromYouTubeUrl(href, out var currentVideoId) &&
                     !string.Equals(currentVideoId, expectedVideoId, StringComparison.Ordinal);
-                var reachedEnd = duration > 0d && position >= duration - 0.9d;
+                var reachedEnd = duration > 0d && position >= duration - 0.7d;
 
-                if (!_youTubeBrowserHasPlayed || _youTubeBrowserTransitioning ||
-                    (!ended && !reachedEnd && !urlChangedToAnotherVideo))
+                if (_youTubeBrowserHasPlayed && !_youTubeBrowserTransitioning &&
+                    (ended || reachedEnd || urlChangedToAnotherVideo))
                 {
+                    _youTubeBrowserTransitioning = true;
+                    await MainThread.InvokeOnMainThreadAsync(async () =>
+                    {
+                        try
+                        {
+                            // Drumless owns playlist sequencing. Stop the YouTube page first so its
+                            // own autoplay cannot continue, then advance using Sequential/Shuffle/Single.
+                            if (_youTubeBrowser is not null)
+                            {
+                                await _youTubeBrowser.EvaluateJavaScriptAsync(
+                                    "(() => { const v=document.querySelector('video'); if(v){v.pause();} return true; })()");
+                            }
+
+                            if (!string.Equals(_viewModel.CurrentItem?.Id, itemId, StringComparison.Ordinal))
+                            {
+                                return;
+                            }
+
+                            _youTubeBrowserReportedPlaying = false;
+                            _viewModel.ReportPlaybackState(false);
+                            _viewModel.Next(automatic: true);
+                        }
+                        finally
+                        {
+                            _youTubeBrowserTransitioning = false;
+                        }
+                    });
+                    return;
+                }
+
+                if (!observedPlaying)
+                {
+                    nextPollDelay = 1500;
                     continue;
                 }
 
-                _youTubeBrowserTransitioning = true;
-                await MainThread.InvokeOnMainThreadAsync(async () =>
+                if (duration <= 0d)
                 {
-                    try
-                    {
-                        // Drumless owns playlist sequencing. Stop the YouTube page first so its own
-                        // autoplay cannot continue, then advance using Sequential/Shuffle/Single.
-                        if (_youTubeBrowser is not null)
-                        {
-                            await _youTubeBrowser.EvaluateJavaScriptAsync(
-                                "(() => { const v=document.querySelector('video'); if(v){v.pause();} return true; })()");
-                        }
+                    nextPollDelay = 2000;
+                    continue;
+                }
 
-                        if (!string.Equals(_viewModel.CurrentItem?.Id, itemId, StringComparison.Ordinal))
-                        {
-                            return;
-                        }
-
-                        _viewModel.ReportPlaybackState(false);
-                        _viewModel.Next(automatic: true);
-                    }
-                    finally
-                    {
-                        _youTubeBrowserTransitioning = false;
-                    }
-                });
-                return;
+                var remaining = Math.Max(0d, duration - position);
+                nextPollDelay = remaining switch
+                {
+                    <= 4d => 250,
+                    <= 10d => 750,
+                    _ => 2500
+                };
             }
         }
         catch (OperationCanceledException)
