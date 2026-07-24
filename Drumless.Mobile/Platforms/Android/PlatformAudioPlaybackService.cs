@@ -218,11 +218,16 @@ public sealed class PlatformAudioPlaybackService : IAudioPlaybackService
 
     public void Dispose() => Stop();
 
-    private sealed class PlayerErrorListener(
-        Func<MediaPlayer?, MediaError, int, bool> handler)
-        : Java.Lang.Object, MediaPlayer.IOnErrorListener
+    private sealed class PlayerErrorListener : Java.Lang.Object, MediaPlayer.IOnErrorListener
     {
+        private readonly Func<MediaPlayer?, MediaError, int, bool> _handler;
+
+        public PlayerErrorListener(Func<MediaPlayer?, MediaError, int, bool> handler)
+        {
+            _handler = handler;
+        }
+
         public bool OnError(MediaPlayer? mp, MediaError what, int extra) =>
-            handler(mp, what, extra);
+            _handler(mp, what, extra);
     }
 }
