@@ -37,6 +37,7 @@ public partial class MainPage
         }
 
         EnableYouTubeBrowserPlaybackIntegration();
+        EnableYouTubeAudioGuardIntegration();
     }
 
     private void RewireYouTubeMessageHandler()
