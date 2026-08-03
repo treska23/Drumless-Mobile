@@ -37,7 +37,6 @@ public partial class MainPage
         }
 
         EnableYouTubeBrowserPlaybackIntegration();
-        EnableYouTubeAudioGuardIntegration();
     }
 
     private void RewireYouTubeMessageHandler()
@@ -79,20 +78,16 @@ public partial class MainPage
             switch (type)
             {
                 case "ready":
-                    // Ready is needed only so the helper can inspect imported playlists. Never
-                    // call TryStartPendingYouTube here: embedded video playback is disabled.
                     _youtubeReady = true;
                     TryStartPendingPlaylistImport();
                     return;
 
                 case "playlist":
                 case "playlistError":
-                    // These are the only messages still owned by the HybridWebView helper.
                     OnYouTubeMessageReceived(sender, e);
                     return;
 
                 default:
-                    // Ignore state/position/error/autoplayBlocked from the obsolete iframe player.
                     return;
             }
         }
