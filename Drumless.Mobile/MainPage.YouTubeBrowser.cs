@@ -11,17 +11,15 @@ public partial class MainPage
     private WebView? _youTubeBrowser;
     private Grid? _youTubeBrowserOverlay;
     private Button? _youTubeBrowserExpandButton;
-    private CancellationTokenSource? _youTubeBrowserMonitorCancellation;
     private string? _youTubeBrowserItemId;
-    private bool _youTubeBrowserHasPlayed;
+    private string? _youTubeBrowserVideoId;
     private bool _youTubeBrowserTransitioning;
     private bool _youTubeBrowserExpanded;
     private bool? _youTubeBrowserReportedPlaying;
+    private long _youTubeBrowserBridgeGeneration;
 
     private void EnableYouTubeBrowserPlaybackIntegration()
     {
-        // Actual YouTube tracks play only in the full mobile YouTube site hosted by Drumless'
-        // own WebView. The legacy iframe handler remains available only for playlist inspection.
         _viewModel.PlaybackRequested -= OnPlaybackRequested;
         _viewModel.PlaybackRequested -= OnYouTubeBrowserPlaybackRequested;
         _viewModel.PlaybackRequested += OnYouTubeBrowserPlaybackRequested;
@@ -49,6 +47,7 @@ public partial class MainPage
             HorizontalOptions = LayoutOptions.Fill,
             VerticalOptions = LayoutOptions.Fill
         };
+        browser.Navigating += OnYouTubeBrowserNavigating;
         browser.Navigated += OnYouTubeBrowserNavigated;
 
         var title = new Label
@@ -105,8 +104,6 @@ public partial class MainPage
         overlay.Add(browser, 0, 1);
         Grid.SetRow(overlay, 1);
 
-        // The compact browser floats at the bottom. The playlist remains visible and usable behind
-        // it; the user can explicitly expand the browser only when account/page interaction is needed.
         root.Children.Add(overlay);
         _youTubeBrowser = browser;
         _youTubeBrowserOverlay = overlay;
@@ -195,15 +192,15 @@ public partial class MainPage
             return;
         }
 
-        CancelYouTubeBrowserMonitor();
+        Interlocked.Increment(ref _youTubeBrowserBridgeGeneration);
         _youTubeBrowserItemId = item.Id;
-        _youTubeBrowserHasPlayed = false;
+        _youTubeBrowserVideoId = item.YouTubeVideoId;
         _youTubeBrowserTransitioning = false;
         _youTubeBrowserReportedPlaying = null;
         _youtubePositionSeconds = 0;
+        _youtubePositionReceivedTimestamp = Stopwatch.GetTimestamp();
         _youtubeIsPlaying = false;
 
-        // Always start compact. The track list must remain on screen during normal playback.
         _youTubeBrowserExpanded = false;
         _youTubeBrowserOverlay.HeightRequest = YouTubeBrowserCollapsedHeight;
         _youTubeBrowserOverlay.VerticalOptions = LayoutOptions.End;
@@ -214,60 +211,299 @@ public partial class MainPage
         }
 
         _youTubeBrowserOverlay.IsVisible = true;
-        var url = $"https://m.youtube.com/watch?v={Uri.EscapeDataString(item.YouTubeVideoId)}";
-        _youTubeBrowser.Source = url;
+        _youTubeBrowser.Source =
+            $"https://m.youtube.com/watch?v={Uri.EscapeDataString(item.YouTubeVideoId)}";
 
-        var cancellation = new CancellationTokenSource();
-        _youTubeBrowserMonitorCancellation = cancellation;
-        _ = MonitorYouTubeBrowserAsync(item.Id, item.YouTubeVideoId, cancellation.Token);
+        await Task.CompletedTask;
     }
 
-    private async void OnYouTubeBrowserNavigated(object? sender, WebNavigatedEventArgs e)
+    private void OnYouTubeBrowserNavigating(object? sender, WebNavigatingEventArgs e)
     {
-        if (_youTubeBrowser is null ||
-            _viewModel.CurrentItem?.Model.Kind != MediaKind.YouTube ||
-            string.IsNullOrWhiteSpace(_youTubeBrowserItemId))
+        if (!Uri.TryCreate(e.Url, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, "drumless", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(uri.Host, "youtube", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
+        e.Cancel = true;
+        MainThread.BeginInvokeOnMainThread(() => HandleYouTubeBrowserSignal(uri));
+    }
+
+    private async void OnYouTubeBrowserNavigated(object? sender, WebNavigatedEventArgs e)
+    {
+        var itemId = _youTubeBrowserItemId;
+        var videoId = _youTubeBrowserVideoId;
+        if (_youTubeBrowser is null ||
+            string.IsNullOrWhiteSpace(itemId) ||
+            string.IsNullOrWhiteSpace(videoId) ||
+            !string.Equals(_viewModel.CurrentItem?.Id, itemId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var generation = Volatile.Read(ref _youTubeBrowserBridgeGeneration);
         try
         {
-            await EnsureYouTubeBrowserAudibleAndPlayingAsync();
+            await InstallYouTubePageBridgeAsync(itemId, videoId, generation);
         }
         catch (Exception)
         {
-            // The monitor keeps waiting while the page or sign-in flow loads.
+            // YouTube can perform several SPA navigations while building the page. A later
+            // Navigated event will retry without interrupting playback.
         }
     }
 
-    private async Task EnsureYouTubeBrowserAudibleAndPlayingAsync()
+    private async Task InstallYouTubePageBridgeAsync(
+        string itemId,
+        string expectedVideoId,
+        long generation)
     {
         if (_youTubeBrowser is null)
         {
             return;
         }
 
-        // Keep this light: EvaluateJavaScriptAsync executes through the WebView/UI thread. A few
-        // spaced attempts are enough for YouTube's SPA to create the <video> element without
-        // hammering Chromium during the first seconds of playback.
-        var delays = new[] { 500, 1000, 1500 };
+        var itemLiteral = JsonSerializer.Serialize(itemId);
+        var videoLiteral = JsonSerializer.Serialize(expectedVideoId);
+        var script = $$"""
+            (() => {
+              const itemId = {{itemLiteral}};
+              const expectedVideoId = {{videoLiteral}};
+              const key = '__drumlessBridgeV4';
+
+              const send = (eventName, video) => {
+                const position = Number(video?.currentTime || 0).toFixed(3);
+                const duration = Number(video?.duration || 0).toFixed(3);
+                const url = 'drumless://youtube?event=' + encodeURIComponent(eventName)
+                  + '&item=' + encodeURIComponent(itemId)
+                  + '&position=' + encodeURIComponent(position)
+                  + '&duration=' + encodeURIComponent(duration);
+                window.location.href = url;
+              };
+
+              if (window[key]?.dispose) {
+                window[key].dispose();
+              }
+
+              const state = {
+                video: null,
+                finished: false,
+                repairingVolume: false,
+                listeners: [],
+
+                currentVideoId() {
+                  try {
+                    return new URL(window.location.href).searchParams.get('v') || '';
+                  } catch (_) {
+                    return '';
+                  }
+                },
+
+                forceAudible(video) {
+                  if (!video || this.repairingVolume) return;
+                  this.repairingVolume = true;
+                  try {
+                    video.removeAttribute('muted');
+                    video.defaultMuted = false;
+                    if (video.muted) video.muted = false;
+                    if (!Number.isFinite(video.volume) || video.volume < 0.99) {
+                      video.volume = 1;
+                    }
+                  } finally {
+                    this.repairingVolume = false;
+                  }
+                },
+
+                on(target, name, handler) {
+                  target.addEventListener(name, handler, { passive: true });
+                  this.listeners.push([target, name, handler]);
+                },
+
+                finish(reason) {
+                  if (this.finished || !this.video) return;
+                  this.finished = true;
+                  try { this.video.pause(); } catch (_) {}
+                  send('ended', this.video);
+                },
+
+                attach() {
+                  const video = document.querySelector('video');
+                  if (!video || video === this.video) return Boolean(video);
+
+                  for (const [target, name, handler] of this.listeners) {
+                    try { target.removeEventListener(name, handler); } catch (_) {}
+                  }
+                  this.listeners = [];
+                  this.video = video;
+                  this.finished = false;
+                  this.forceAudible(video);
+
+                  this.on(video, 'loadedmetadata', () => {
+                    this.forceAudible(video);
+                    if (this.currentVideoId() && this.currentVideoId() !== expectedVideoId) {
+                      this.finish('video-changed');
+                    }
+                  });
+                  this.on(video, 'canplay', () => this.forceAudible(video));
+                  this.on(video, 'playing', () => {
+                    this.forceAudible(video);
+                    send('playing', video);
+                  });
+                  this.on(video, 'pause', () => {
+                    if (!this.finished && !video.ended) send('paused', video);
+                  });
+                  this.on(video, 'seeked', () => {
+                    send(video.paused ? 'paused' : 'playing', video);
+                  });
+                  this.on(video, 'volumechange', () => {
+                    if (video.muted || video.volume < 0.99) this.forceAudible(video);
+                  });
+                  this.on(video, 'timeupdate', () => {
+                    if (this.finished || !Number.isFinite(video.duration) || video.duration <= 0) return;
+                    if (video.currentTime > 0.1 && video.duration - video.currentTime <= 0.55) {
+                      this.finish('near-end');
+                    }
+                  });
+                  this.on(video, 'ended', () => this.finish('ended'));
+
+                  const play = video.play();
+                  if (play?.catch) play.catch(() => {});
+                  return true;
+                },
+
+                navigationFinished: null,
+                dispose() {
+                  for (const [target, name, handler] of this.listeners) {
+                    try { target.removeEventListener(name, handler); } catch (_) {}
+                  }
+                  this.listeners = [];
+                  if (this.navigationFinished) {
+                    document.removeEventListener('yt-navigate-finish', this.navigationFinished);
+                  }
+                }
+              };
+
+              state.navigationFinished = () => {
+                state.attach();
+                const current = state.currentVideoId();
+                if (current && current !== expectedVideoId) state.finish('navigation');
+              };
+              document.addEventListener('yt-navigate-finish', state.navigationFinished, { passive: true });
+              window[key] = state;
+
+              return state.attach() ? 'READY' : 'WAIT';
+            })()
+            """;
+
+        var delays = new[] { 200, 450, 900, 1600 };
         foreach (var delay in delays)
         {
             await Task.Delay(delay);
-            if (_youTubeBrowser is null)
+            if (_youTubeBrowser is null ||
+                generation != Volatile.Read(ref _youTubeBrowserBridgeGeneration) ||
+                !string.Equals(_youTubeBrowserItemId, itemId, StringComparison.Ordinal) ||
+                !string.Equals(_viewModel.CurrentItem?.Id, itemId, StringComparison.Ordinal))
             {
                 return;
             }
 
-            var result = await MainThread.InvokeOnMainThreadAsync(() =>
-                _youTubeBrowser.EvaluateJavaScriptAsync(
-                    "(() => { const v=document.querySelector('video'); if(!v) return 'NOV'; const b=document.querySelector('.ytp-mute-button'); if(v.muted && b){try{b.click();}catch(e){}} v.removeAttribute('muted'); v.defaultMuted=false; v.muted=false; v.volume=1; const p=v.play(); if(p&&p.catch){p.catch(()=>{});} return 'OK'; })()"));
-            var state = NormalizeJavaScriptString(result);
-            if (string.Equals(state, "OK", StringComparison.Ordinal))
+            var raw = await MainThread.InvokeOnMainThreadAsync(() =>
+                _youTubeBrowser.EvaluateJavaScriptAsync(script));
+            if (string.Equals(
+                    NormalizeJavaScriptString(raw),
+                    "READY",
+                    StringComparison.Ordinal))
             {
                 return;
             }
+        }
+    }
+
+    private void HandleYouTubeBrowserSignal(Uri uri)
+    {
+        var values = ParseQuery(uri.Query);
+        if (!values.TryGetValue("event", out var eventName) ||
+            !values.TryGetValue("item", out var itemId) ||
+            !string.Equals(itemId, _youTubeBrowserItemId, StringComparison.Ordinal) ||
+            !string.Equals(itemId, _viewModel.CurrentItem?.Id, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (values.TryGetValue("position", out var positionText) &&
+            double.TryParse(
+                positionText,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var position))
+        {
+            _youtubePositionSeconds = Math.Max(0d, position);
+            _youtubePositionReceivedTimestamp = Stopwatch.GetTimestamp();
+        }
+
+        switch (eventName)
+        {
+            case "playing":
+                SetYouTubeBrowserPlaybackState(true);
+                break;
+            case "paused":
+                SetYouTubeBrowserPlaybackState(false);
+                break;
+            case "ended":
+                _ = CompleteYouTubeBrowserItemAsync(itemId);
+                break;
+        }
+    }
+
+    private void SetYouTubeBrowserPlaybackState(bool isPlaying)
+    {
+        _youtubeIsPlaying = isPlaying;
+        if (_youTubeBrowserReportedPlaying == isPlaying)
+        {
+            return;
+        }
+
+        _youTubeBrowserReportedPlaying = isPlaying;
+        _viewModel.ReportPlaybackState(isPlaying);
+    }
+
+    private async Task CompleteYouTubeBrowserItemAsync(string itemId)
+    {
+        if (_youTubeBrowserTransitioning ||
+            !string.Equals(itemId, _youTubeBrowserItemId, StringComparison.Ordinal) ||
+            !string.Equals(itemId, _viewModel.CurrentItem?.Id, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _youTubeBrowserTransitioning = true;
+        try
+        {
+            if (_youTubeBrowser is not null)
+            {
+                try
+                {
+                    await _youTubeBrowser.EvaluateJavaScriptAsync(
+                        "(() => { const v=document.querySelector('video'); if(v){v.pause();} return true; })()");
+                }
+                catch (Exception)
+                {
+                    // The page can already be changing because YouTube attempted autoplay.
+                }
+            }
+
+            if (!string.Equals(itemId, _viewModel.CurrentItem?.Id, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            SetYouTubeBrowserPlaybackState(false);
+            _viewModel.Next(automatic: true);
+        }
+        finally
+        {
+            _youTubeBrowserTransitioning = false;
         }
     }
 
@@ -284,9 +520,9 @@ public partial class MainPage
 
     private async Task StopYouTubeBrowserAsync(bool hide)
     {
-        CancelYouTubeBrowserMonitor();
+        Interlocked.Increment(ref _youTubeBrowserBridgeGeneration);
         _youTubeBrowserItemId = null;
-        _youTubeBrowserHasPlayed = false;
+        _youTubeBrowserVideoId = null;
         _youTubeBrowserTransitioning = false;
         _youTubeBrowserReportedPlaying = null;
         _youtubeIsPlaying = false;
@@ -296,7 +532,7 @@ public partial class MainPage
             try
             {
                 await _youTubeBrowser.EvaluateJavaScriptAsync(
-                    "(() => { const v=document.querySelector('video'); if(v){v.pause();} return true; })()");
+                    "(() => { const b=window.__drumlessBridgeV4; if(b?.dispose)b.dispose(); const v=document.querySelector('video'); if(v){v.pause();} return true; })()");
             }
             catch (Exception)
             {
@@ -310,151 +546,18 @@ public partial class MainPage
         }
     }
 
-    private void CancelYouTubeBrowserMonitor()
+    private static Dictionary<string, string> ParseQuery(string query)
     {
-        var cancellation = _youTubeBrowserMonitorCancellation;
-        _youTubeBrowserMonitorCancellation = null;
-        if (cancellation is null)
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var pair in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
-            return;
+            var separator = pair.IndexOf('=');
+            var key = separator < 0 ? pair : pair[..separator];
+            var value = separator < 0 ? string.Empty : pair[(separator + 1)..];
+            values[Uri.UnescapeDataString(key)] = Uri.UnescapeDataString(value);
         }
 
-        cancellation.Cancel();
-        cancellation.Dispose();
-    }
-
-    private async Task MonitorYouTubeBrowserAsync(
-        string itemId,
-        string expectedVideoId,
-        CancellationToken cancellationToken)
-    {
-        var nextPollDelay = 2000;
-
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                await Task.Delay(nextPollDelay, cancellationToken);
-                if (_youTubeBrowser is null ||
-                    !string.Equals(_youTubeBrowserItemId, itemId, StringComparison.Ordinal) ||
-                    !string.Equals(_viewModel.CurrentItem?.Id, itemId, StringComparison.Ordinal))
-                {
-                    return;
-                }
-
-                // Android WebView requires evaluateJavascript on the UI thread. Keep these calls
-                // infrequent during normal playback, then tighten the cadence only near the end.
-                var raw = await MainThread.InvokeOnMainThreadAsync(() =>
-                    _youTubeBrowser.EvaluateJavaScriptAsync(
-                        "(() => { const v=document.querySelector('video'); const h=location.href; if(!v) return 'NOV|'+h; return [v.ended?'1':'0',v.paused?'1':'0',Number(v.currentTime||0).toFixed(3),Number(v.duration||0).toFixed(3),h].join('|'); })()"));
-                var state = NormalizeJavaScriptString(raw);
-                if (string.IsNullOrWhiteSpace(state) || state.StartsWith("NOV|", StringComparison.Ordinal))
-                {
-                    nextPollDelay = 2000;
-                    continue;
-                }
-
-                var parts = state.Split('|', 5);
-                if (parts.Length < 5 ||
-                    !double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out var position) ||
-                    !double.TryParse(parts[3], System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out var duration))
-                {
-                    nextPollDelay = 2000;
-                    continue;
-                }
-
-                var ended = parts[0] == "1";
-                var paused = parts[1] == "1";
-                var href = parts[4];
-                var observedPlaying = !paused;
-
-                _youtubePositionSeconds = Math.Max(0d, position);
-                _youtubePositionReceivedTimestamp = Stopwatch.GetTimestamp();
-                _youtubeIsPlaying = observedPlaying;
-
-                if (observedPlaying && position > 0.05d)
-                {
-                    _youTubeBrowserHasPlayed = true;
-                }
-
-                // Do not rewrite StatusMessage and bound UI state on every poll. That periodic UI
-                // invalidation was unnecessary work while Chromium was decoding and playing audio.
-                if (_youTubeBrowserReportedPlaying != observedPlaying)
-                {
-                    _youTubeBrowserReportedPlaying = observedPlaying;
-                    _viewModel.ReportPlaybackState(observedPlaying);
-                }
-
-                var urlChangedToAnotherVideo =
-                    TryGetVideoIdFromYouTubeUrl(href, out var currentVideoId) &&
-                    !string.Equals(currentVideoId, expectedVideoId, StringComparison.Ordinal);
-                var reachedEnd = duration > 0d && position >= duration - 0.7d;
-
-                if (_youTubeBrowserHasPlayed && !_youTubeBrowserTransitioning &&
-                    (ended || reachedEnd || urlChangedToAnotherVideo))
-                {
-                    _youTubeBrowserTransitioning = true;
-                    await MainThread.InvokeOnMainThreadAsync(async () =>
-                    {
-                        try
-                        {
-                            // Drumless owns playlist sequencing. Stop the YouTube page first so its
-                            // own autoplay cannot continue, then advance using Sequential/Shuffle/Single.
-                            if (_youTubeBrowser is not null)
-                            {
-                                await _youTubeBrowser.EvaluateJavaScriptAsync(
-                                    "(() => { const v=document.querySelector('video'); if(v){v.pause();} return true; })()");
-                            }
-
-                            if (!string.Equals(_viewModel.CurrentItem?.Id, itemId, StringComparison.Ordinal))
-                            {
-                                return;
-                            }
-
-                            _youTubeBrowserReportedPlaying = false;
-                            _viewModel.ReportPlaybackState(false);
-                            _viewModel.Next(automatic: true);
-                        }
-                        finally
-                        {
-                            _youTubeBrowserTransitioning = false;
-                        }
-                    });
-                    return;
-                }
-
-                if (!observedPlaying)
-                {
-                    nextPollDelay = 1500;
-                    continue;
-                }
-
-                if (duration <= 0d)
-                {
-                    nextPollDelay = 2000;
-                    continue;
-                }
-
-                var remaining = Math.Max(0d, duration - position);
-                nextPollDelay = remaining switch
-                {
-                    <= 4d => 250,
-                    <= 10d => 750,
-                    _ => 2500
-                };
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Normal when changing tracks.
-        }
-        catch (Exception exception)
-        {
-            await MainThread.InvokeOnMainThreadAsync(() =>
-                _viewModel.ReportPlaybackFailure($"No se pudo supervisar YouTube: {exception.Message}"));
-        }
+        return values;
     }
 
     private static string NormalizeJavaScriptString(string? value)
@@ -478,29 +581,5 @@ public partial class MainPage
         }
 
         return trimmed;
-    }
-
-    private static bool TryGetVideoIdFromYouTubeUrl(string? url, out string? videoId)
-    {
-        videoId = null;
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        {
-            return false;
-        }
-
-        var query = uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries);
-        foreach (var pair in query)
-        {
-            var separator = pair.IndexOf('=');
-            if (separator <= 0 || !string.Equals(pair[..separator], "v", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            videoId = Uri.UnescapeDataString(pair[(separator + 1)..]);
-            return !string.IsNullOrWhiteSpace(videoId);
-        }
-
-        return false;
     }
 }
