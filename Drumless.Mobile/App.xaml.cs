@@ -12,8 +12,8 @@ public partial class App : Application
 
     protected override Window CreateWindow(IActivationState? activationState)
     {
-        var window = new Window(_mainPage);
-        window.Deactivated += (_, _) => _mainPage.PauseForBackground();
-        return window;
+        // YouTube playback now remains inside Drumless' own WebView, so there is no external
+        // YouTube-app handoff to resume when the window returns to the foreground.
+        return new Window(_mainPage);
     }
 }

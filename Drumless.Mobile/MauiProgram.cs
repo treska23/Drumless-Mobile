@@ -9,6 +9,33 @@ public static class MauiProgram
 {
     public static MauiApp CreateMauiApp()
     {
+#if ANDROID
+        // Both web surfaces use Android's native WebView. Relax the gesture requirement so a
+        // playlist transition initiated by Drumless can start the next YouTube item automatically.
+        Microsoft.Maui.Handlers.HybridWebViewHandler.Mapper.AppendToMapping(
+            "AllowMediaAutoplay",
+            (handler, _) =>
+            {
+                if (handler.PlatformView is Android.Webkit.WebView webView)
+                {
+                    webView.Settings.MediaPlaybackRequiresUserGesture = false;
+                }
+            });
+
+        Microsoft.Maui.Handlers.WebViewHandler.Mapper.AppendToMapping(
+            "AllowMediaAutoplay",
+            (handler, _) =>
+            {
+                if (handler.PlatformView is Android.Webkit.WebView webView)
+                {
+                    webView.Settings.MediaPlaybackRequiresUserGesture = false;
+                    webView.Settings.DomStorageEnabled = true;
+                    Android.Webkit.CookieManager.Instance.SetAcceptCookie(true);
+                    Android.Webkit.CookieManager.Instance.SetAcceptThirdPartyCookies(webView, true);
+                }
+            });
+#endif
+
         var builder = MauiApp.CreateBuilder();
         builder
             .UseMauiApp<App>()

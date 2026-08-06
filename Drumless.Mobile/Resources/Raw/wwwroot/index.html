@@ -37,27 +37,66 @@
     <script>
         let player = null;
         let pendingVideoId = null;
+        let activeVideoId = null;
+        let hasPlayedCurrentVideo = false;
+        let endedNotifiedVideoId = null;
         let pendingPlaylistImport = null;
         let playlistPollTimer = null;
 
         function notify(payload) {
-            if (window.HybridWebView) {
-                window.HybridWebView.SendRawMessage(JSON.stringify(payload));
+            try {
+                if (window.HybridWebView) {
+                    window.HybridWebView.SendRawMessage(JSON.stringify(payload));
+                }
+            } catch (error) {
+                console.warn("No se pudo enviar un mensaje al host", error);
+            }
+        }
+
+        function getCurrentVideoId() {
+            try {
+                if (!player || typeof player.getVideoData !== "function") return null;
+                const data = player.getVideoData();
+                return data && data.video_id ? data.video_id : null;
+            } catch (_) {
+                return null;
             }
         }
 
         function playVideo(videoId) {
             if (!videoId) return;
+
+            activeVideoId = videoId;
+            hasPlayedCurrentVideo = false;
+            endedNotifiedVideoId = null;
+
             if (!player || typeof player.loadVideoById !== "function") {
                 pendingVideoId = videoId;
                 return;
             }
+
             pendingVideoId = null;
             player.loadVideoById({ videoId: videoId });
+
+            // loadVideoById ya solicita reproducción, pero este segundo intento ayuda a
+            // reanudar transiciones automáticas entre pistas cuando el WebView está listo.
+            window.setTimeout(function () {
+                try {
+                    if (player && activeVideoId === videoId) {
+                        player.playVideo();
+                    }
+                } catch (_) {
+                    // onAutoplayBlocked/onError informarán al host si YouTube lo rechaza.
+                }
+            }, 75);
         }
 
         function inspectPlaylist(playlistId, requestId) {
             if (!playlistId || !requestId) return;
+
+            activeVideoId = null;
+            hasPlayedCurrentVideo = false;
+            endedNotifiedVideoId = null;
             pendingPlaylistImport = {
                 playlistId: playlistId,
                 requestId: requestId,
@@ -136,7 +175,7 @@
                     player.pauseVideo();
                 }
             } catch (error) {
-                notify({ type: "error", message: String(error) });
+                notify({ type: "error", message: String(error), videoId: activeVideoId });
             }
         });
 
@@ -145,6 +184,7 @@
                 width: "100%",
                 height: "100%",
                 playerVars: {
+                    autoplay: 1,
                     playsinline: 1,
                     rel: 0,
                     origin: window.location.origin
@@ -160,11 +200,44 @@
                         }
                     },
                     onStateChange: function (event) {
-                        notify({ type: "state", state: event.data });
                         if (pendingPlaylistImport) {
                             pendingPlaylistImport.stateChanged = true;
                             pollPlaylist();
+                            return;
                         }
+
+                        const currentVideoId = getCurrentVideoId();
+
+                        // Los eventos del iframe pueden llegar tarde al cambiar rápidamente
+                        // de vídeo. Ignoramos cualquier evento que pertenezca al vídeo anterior.
+                        if (activeVideoId && currentVideoId && currentVideoId !== activeVideoId) {
+                            return;
+                        }
+
+                        if (event.data === YT.PlayerState.PLAYING) {
+                            if (!activeVideoId || !currentVideoId || currentVideoId === activeVideoId) {
+                                hasPlayedCurrentVideo = true;
+                                endedNotifiedVideoId = null;
+                            }
+                        }
+
+                        if (event.data === YT.PlayerState.ENDED) {
+                            // Un ENDED atrasado no debe hacer avanzar dos veces la playlist.
+                            if (!activeVideoId ||
+                                currentVideoId !== activeVideoId ||
+                                !hasPlayedCurrentVideo ||
+                                endedNotifiedVideoId === activeVideoId) {
+                                return;
+                            }
+                            endedNotifiedVideoId = activeVideoId;
+                            hasPlayedCurrentVideo = false;
+                        }
+
+                        notify({
+                            type: "state",
+                            state: event.data,
+                            videoId: activeVideoId || currentVideoId
+                        });
                     },
                     onError: function (event) {
                         if (pendingPlaylistImport) {
@@ -172,10 +245,10 @@
                             pollPlaylist();
                             return;
                         }
-                        notify({ type: "error", code: event.data });
+                        notify({ type: "error", code: event.data, videoId: activeVideoId });
                     },
                     onAutoplayBlocked: function () {
-                        notify({ type: "autoplayBlocked" });
+                        notify({ type: "autoplayBlocked", videoId: activeVideoId });
                     }
                 }
             });
@@ -185,18 +258,20 @@
         script.src = "https://www.youtube.com/iframe_api";
         document.head.appendChild(script);
 
+        // La posición no necesita cruzar el puente JS/.NET 12 veces por segundo.
+        // 250 ms mantiene el transporte suficientemente preciso y reduce presión sobre WebView.
         setInterval(function () {
             if (!player || typeof player.getCurrentTime !== "function") return;
             const state = player.getPlayerState();
             if (state !== YT.PlayerState.PLAYING &&
-                state !== YT.PlayerState.PAUSED &&
                 state !== YT.PlayerState.BUFFERING) return;
             notify({
                 type: "position",
                 seconds: player.getCurrentTime(),
-                playing: state === YT.PlayerState.PLAYING
+                playing: state === YT.PlayerState.PLAYING,
+                videoId: activeVideoId || getCurrentVideoId()
             });
-        }, 80);
+        }, 250);
     </script>
 </body>
 </html>
